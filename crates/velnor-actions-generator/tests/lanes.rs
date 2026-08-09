@@ -195,9 +195,13 @@ fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
         ("EVENT_NAME", "push"),
         ("REF_TYPE", "branch"),
         ("REF_PROTECTED", "false"),
+        ("REF_NAME", ""),
         ("HEAD_SHA", DUMMY_SHA),
         ("WORKFLOW_SHA", DUMMY_SHA),
         ("DECLARED_CACHE_IDS", "tools,dependencies,build-output"),
+        ("RUN_ID", "123"),
+        ("REPOSITORY", "tailrocks/example"),
+        ("GH_TOKEN", "test-token"),
     ] {
         command.env(key, value);
     }
@@ -221,10 +225,14 @@ fn optional_operations_fail_closed_before_project_commands() {
         ("BENCHMARK_WAVE", "wave-0001"),
         ("BENCHMARK_RESERVATION", "reservation-0001"),
     ]));
+    let bin = fake_recovery_gh();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     assert!(run_request_validator(&[
+        ("PATH", path.as_str()),
         ("EVENT_NAME", "workflow_dispatch"),
         ("REF_TYPE", "tag"),
         ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
         ("BENCHMARK_CAMPAIGN", "campaign-0001"),
         ("BENCHMARK_GENERATION", "1"),
         ("BENCHMARK_CACHE_ID", "tools"),
@@ -237,6 +245,92 @@ fn optional_operations_fail_closed_before_project_commands() {
         ("EVENT_NAME", "workflow_dispatch"),
         ("RECOVERY_PROOF_ID", "recovery-deadbeef-operation"),
     ]));
+}
+
+fn fake_recovery_gh() -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let root = common::temp_dir("fake-recovery-gh");
+    let executable = root.join("gh");
+    std::fs::write(
+        &executable,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+url="${2-}"
+if [[ "${url}" == *'/pulls?'* ]]; then printf '%s\n' "${FAKE_PR_COUNT-1}"
+elif [[ "${url}" == *'/actions/runs/123' ]]; then printf '%s\n' "${FAKE_RUN_MATCH-true}"
+elif [[ "${url}" == *'/actions/runs?'* ]]; then printf '%s\n' "${FAKE_DUPLICATE_COUNT-1}"
+elif [[ "${url}" == *'/git/ref/tags/2026.7.0' ]]; then printf '%s\t%s\n' "${FAKE_TAG_TYPE-commit}" "${FAKE_TAG_SHA-__HEAD__}"
+elif [[ "${url}" == *'/contents/.github/workflows/ci.yml?'* ]]; then printf '%s\n' "${FAKE_BLOB-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+else exit 64
+fi
+"#.replace("__HEAD__", DUMMY_SHA),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    root
+}
+
+#[test]
+fn recovery_marker_binds_allocated_run_unique_pr_head_and_duplicate_history() {
+    let bin = fake_recovery_gh();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let valid = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "branch"),
+        ("RECOVERY_PROOF_ID", "recovery-operation-0001"),
+    ];
+    assert!(run_request_validator(&valid));
+
+    let duplicate = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "branch"),
+        ("RECOVERY_PROOF_ID", "recovery-operation-0001"),
+        ("FAKE_DUPLICATE_COUNT", "2"),
+    ];
+    assert!(!run_request_validator(&duplicate));
+
+    let wrong_run = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "branch"),
+        ("RECOVERY_PROOF_ID", "recovery-operation-0001"),
+        ("FAKE_RUN_MATCH", "false"),
+    ];
+    assert!(!run_request_validator(&wrong_run));
+}
+
+#[test]
+fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
+    let bin = fake_recovery_gh();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let common = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
+        ("BENCHMARK_CAMPAIGN", "campaign-0001"),
+        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_CACHE_ID", "tools"),
+        ("BENCHMARK_CACHE_MODE", "enabled"),
+        ("BENCHMARK_FANOUT", "1"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+    ];
+    assert!(run_request_validator(&common));
+    let mut wrong = common.to_vec();
+    wrong.push(("FAKE_TAG_SHA", "cccccccccccccccccccccccccccccccccccccccc"));
+    assert!(!run_request_validator(&wrong));
+    let mut mutable_name = common.to_vec();
+    mutable_name.push(("REF_NAME", "latest"));
+    assert!(!run_request_validator(&mutable_name));
+    let mut bad_blob = common.to_vec();
+    bad_blob.push(("FAKE_BLOB", "not-a-git-blob"));
+    assert!(!run_request_validator(&bad_blob));
 }
 
 #[test]
