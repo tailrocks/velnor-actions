@@ -1228,8 +1228,7 @@ cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
 disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
 cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
 : > .velnor-proof/runtime/hit-sources
-shopt -s nullglob
-evidence=(.velnor-proof/execute/${PROOF_LANE}/*)
+mapfile -d '' -t evidence < <(find ".velnor-proof/execute/${PROOF_LANE}" -mindepth 1 -maxdepth 1 -type d -print0)
 (( ${#evidence[@]} > 0 ))
 for root in "${evidence[@]}"; do
   for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
