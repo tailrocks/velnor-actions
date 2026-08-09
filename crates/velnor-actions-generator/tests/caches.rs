@@ -549,7 +549,7 @@ printf 'bound payload\n' > source/cache/payload
 chmod 640 source/cache/payload
 digest="$(sha256sum source/cache/payload | cut -d' ' -f1)"
 encoded="$(printf '%s' cache/payload | openssl base64 -A)"
-printf '640 %s %s\n' "${{digest}}" "${{encoded}}" > evidence/manifest.txt
+printf 'f 640 %s %s -\n' "${{digest}}" "${{encoded}}" > evidence/manifest.txt
 (cd source && tar -cf ../evidence/cache.tar cache/payload)
 sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256
 sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
@@ -593,6 +593,56 @@ fn immutable_evidence_verifier_rejects_content_identity_and_set_tampering() {
         "printf extra > source/extra; (cd source && tar -rf ../evidence/cache.tar extra); sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256"
     ));
     assert!(!run_evidence_verifier("printf 'velnor\\n' > evidence/lane"));
+}
+
+fn run_typed_evidence_verifier(link_target: &str) -> bool {
+    let root = common::temp_dir("typed-evidence-verifier");
+    let script = format!(
+        r#"set -euo pipefail
+mkdir -p source/cache/empty evidence
+printf payload > source/cache/payload
+ln -s -- "${{LINK_TARGET}}" source/cache/link
+cd source
+: > ../evidence/manifest.txt
+for entry in cache/payload cache/link cache/empty; do
+  mode="$(stat -c '%a' -- "${{entry}}" 2>/dev/null || stat -f '%Lp' -- "${{entry}}")"
+  path="$(printf '%s' "${{entry}}" | openssl base64 -A)"
+  if [[ -L "${{entry}}" ]]; then
+    target="$(readlink -- "${{entry}}")"; digest="$(printf '%s' "${{target}}" | sha256sum | cut -d' ' -f1)"; target="$(printf '%s' "${{target}}" | openssl base64 -A)"; kind=l
+  elif [[ -d "${{entry}}" ]]; then
+    digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target=-; kind=d
+  else
+    digest="$(sha256sum -- "${{entry}}" | cut -d' ' -f1)"; target=-; kind=f
+  fi
+  printf '%s %s %s %s %s\n' "${{kind}}" "${{mode}}" "${{digest}}" "${{path}}" "${{target}}" >> ../evidence/manifest.txt
+done
+LC_ALL=C sort -o ../evidence/manifest.txt ../evidence/manifest.txt
+printf 'cache/payload\0cache/link\0cache/empty\0' | tar --null --files-from=- --no-recursion -cf ../evidence/cache.tar
+cd ..
+sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256
+sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
+printf 'false\ntools\ngithub\n12\n' > /dev/null
+printf 'false\n' > evidence/hit; printf 'tools\n' > evidence/cache-id; printf 'github\n' > evidence/lane; printf '12\n' > evidence/restore-ms
+size="$(stat -c '%s' evidence/cache.tar 2>/dev/null || stat -f '%z' evidence/cache.tar)"; printf '%s\n' "${{size}}" > evidence/cache-bytes; printf '3\n' > evidence/cache-files; printf 'miss\n' > evidence/hit-source; printf '%s\n' -1 > evidence/age-seconds; printf 'unknown\n' > evidence/eviction-risk
+{verifier}
+verify_evidence evidence github tools
+"#,
+        verifier = velnor_actions_generator::render::EVIDENCE_VERIFIER,
+    );
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .env("LINK_TARGET", link_target)
+        .current_dir(root)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn immutable_evidence_preserves_symlinks_and_empty_directories_without_escape() {
+    assert!(run_typed_evidence_verifier("payload"));
+    assert!(!run_typed_evidence_verifier("../../etc/passwd"));
 }
 
 fn reservation_record(participants: usize) -> String {

@@ -496,23 +496,44 @@ jobs:
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           shopt -s globstar nullglob
           destination='.velnor-proof/restore/github/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
           : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+            if [[ -e "${root}" || -L "${root}" ]]; then
+              find "${root}" \( -type f -o -type l -o \( -type d -empty \) \) -print0
+            fi
           done | LC_ALL=C sort -zu > "${destination}/files.nul"
           : > "${destination}/manifest.txt"
           while IFS= read -r -d '' file; do
             [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
             mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
-            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
             encoded="$(printf '%s' "${file}" | openssl base64 -A)"
-            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+            if [[ -L "${file}" ]]; then
+              kind=l; target="$(readlink -- "${file}")"
+              [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* ]] || { echo 'unsafe cache symlink target' >&2; exit 1; }
+              safe_link_target "$(dirname -- "${file}")" "${target}" || { echo 'escaping cache symlink target' >&2; exit 1; }
+              digest="$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)"
+              target_encoded="$(printf '%s' "${target}" | openssl base64 -A)"
+            elif [[ -f "${file}" ]]; then
+              kind=f; digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"; target_encoded=-
+            elif [[ -d "${file}" ]]; then
+              kind=d; digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target_encoded=-
+            else
+              echo 'unsupported cache entry type' >&2; exit 1
+            fi
+            printf '%s %s %s %s %s\n' "${kind}" "${mode}" "${digest}" "${encoded}" "${target_encoded}"
           done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
-          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          tar --null --files-from="${destination}/files.nul" --no-recursion --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
@@ -643,23 +664,44 @@ jobs:
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           shopt -s globstar nullglob
           destination='.velnor-proof/restore/velnor/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
           : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+            if [[ -e "${root}" || -L "${root}" ]]; then
+              find "${root}" \( -type f -o -type l -o \( -type d -empty \) \) -print0
+            fi
           done | LC_ALL=C sort -zu > "${destination}/files.nul"
           : > "${destination}/manifest.txt"
           while IFS= read -r -d '' file; do
             [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
             mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
-            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
             encoded="$(printf '%s' "${file}" | openssl base64 -A)"
-            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+            if [[ -L "${file}" ]]; then
+              kind=l; target="$(readlink -- "${file}")"
+              [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* ]] || { echo 'unsafe cache symlink target' >&2; exit 1; }
+              safe_link_target "$(dirname -- "${file}")" "${target}" || { echo 'escaping cache symlink target' >&2; exit 1; }
+              digest="$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)"
+              target_encoded="$(printf '%s' "${target}" | openssl base64 -A)"
+            elif [[ -f "${file}" ]]; then
+              kind=f; digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"; target_encoded=-
+            elif [[ -d "${file}" ]]; then
+              kind=d; digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target_encoded=-
+            else
+              echo 'unsupported cache entry type' >&2; exit 1
+            fi
+            printf '%s %s %s %s %s\n' "${kind}" "${mode}" "${digest}" "${encoded}" "${target_encoded}"
           done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
-          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          tar --null --files-from="${destination}/files.nul" --no-recursion --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
@@ -717,6 +759,13 @@ jobs:
           TOOLS_velnor_ARTIFACT_DIGEST: ${{ needs.velnor_restore.outputs.tools_artifact_digest }}
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
             for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
@@ -732,28 +781,42 @@ jobs:
             [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
-            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            local scratch="${root}.verified" kind mode digest encoded target_encoded extra path target actual_mode
             rm -rf -- "${scratch}"
             mkdir -p -- "${scratch}/tree"
             : > "${scratch}/expected"
-            while read -r mode digest encoded extra; do
-              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+            while read -r kind mode digest encoded target_encoded extra; do
+              [[ -z "${extra}" && "${kind}" =~ ^(f|l|d)$ && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
               [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
               [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              if [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* && "$(printf '%s' "${target}" | openssl base64 -A)" == "${target_encoded}" ]]
+                safe_link_target "$(dirname -- "${path}")" "${target}"
+                [[ "$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)" == "${digest}" ]]
+              else
+                [[ "${target_encoded}" == - ]]
+              fi
               printf '%s\n' "${path}" >> "${scratch}/expected"
             done < "${root}/manifest.txt"
             LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
             [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
-            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            tar -tf "${root}/cache.tar" | sed 's:/$::' | LC_ALL=C sort -u > "${scratch}/actual"
             diff -u "${scratch}/expected" "${scratch}/actual"
             tar -xf "${root}/cache.tar" -C "${scratch}/tree"
-            while read -r mode digest encoded extra; do
+            while read -r kind mode digest encoded target_encoded extra; do
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
-              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
               actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
               [[ "${actual_mode}" == "${mode}" ]]
-              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              if [[ "${kind}" == f ]]; then
+                [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" && "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              elif [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -L "${scratch}/tree/${path}" && "$(readlink -- "${scratch}/tree/${path}")" == "${target}" ]]
+              else
+                [[ -d "${scratch}/tree/${path}" && -z "$(find "${scratch}/tree/${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+              fi
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
@@ -859,6 +922,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
             for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
@@ -874,28 +944,42 @@ jobs:
             [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
-            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            local scratch="${root}.verified" kind mode digest encoded target_encoded extra path target actual_mode
             rm -rf -- "${scratch}"
             mkdir -p -- "${scratch}/tree"
             : > "${scratch}/expected"
-            while read -r mode digest encoded extra; do
-              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+            while read -r kind mode digest encoded target_encoded extra; do
+              [[ -z "${extra}" && "${kind}" =~ ^(f|l|d)$ && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
               [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
               [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              if [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* && "$(printf '%s' "${target}" | openssl base64 -A)" == "${target_encoded}" ]]
+                safe_link_target "$(dirname -- "${path}")" "${target}"
+                [[ "$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)" == "${digest}" ]]
+              else
+                [[ "${target_encoded}" == - ]]
+              fi
               printf '%s\n' "${path}" >> "${scratch}/expected"
             done < "${root}/manifest.txt"
             LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
             [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
-            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            tar -tf "${root}/cache.tar" | sed 's:/$::' | LC_ALL=C sort -u > "${scratch}/actual"
             diff -u "${scratch}/expected" "${scratch}/actual"
             tar -xf "${root}/cache.tar" -C "${scratch}/tree"
-            while read -r mode digest encoded extra; do
+            while read -r kind mode digest encoded target_encoded extra; do
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
-              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
               actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
               [[ "${actual_mode}" == "${mode}" ]]
-              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              if [[ "${kind}" == f ]]; then
+                [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" && "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              elif [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -L "${scratch}/tree/${path}" && "$(readlink -- "${scratch}/tree/${path}")" == "${target}" ]]
+              else
+                [[ -d "${scratch}/tree/${path}" && -z "$(find "${scratch}/tree/${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+              fi
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
@@ -1026,23 +1110,44 @@ jobs:
           CACHE_HIT: post
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           shopt -s globstar nullglob
           destination='.velnor-proof/post/github/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
           : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+            if [[ -e "${root}" || -L "${root}" ]]; then
+              find "${root}" \( -type f -o -type l -o \( -type d -empty \) \) -print0
+            fi
           done | LC_ALL=C sort -zu > "${destination}/files.nul"
           : > "${destination}/manifest.txt"
           while IFS= read -r -d '' file; do
             [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
             mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
-            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
             encoded="$(printf '%s' "${file}" | openssl base64 -A)"
-            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+            if [[ -L "${file}" ]]; then
+              kind=l; target="$(readlink -- "${file}")"
+              [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* ]] || { echo 'unsafe cache symlink target' >&2; exit 1; }
+              safe_link_target "$(dirname -- "${file}")" "${target}" || { echo 'escaping cache symlink target' >&2; exit 1; }
+              digest="$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)"
+              target_encoded="$(printf '%s' "${target}" | openssl base64 -A)"
+            elif [[ -f "${file}" ]]; then
+              kind=f; digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"; target_encoded=-
+            elif [[ -d "${file}" ]]; then
+              kind=d; digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target_encoded=-
+            else
+              echo 'unsupported cache entry type' >&2; exit 1
+            fi
+            printf '%s %s %s %s %s\n' "${kind}" "${mode}" "${digest}" "${encoded}" "${target_encoded}"
           done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
-          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          tar --null --files-from="${destination}/files.nul" --no-recursion --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
@@ -1129,6 +1234,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
             for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
@@ -1144,28 +1256,42 @@ jobs:
             [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
-            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            local scratch="${root}.verified" kind mode digest encoded target_encoded extra path target actual_mode
             rm -rf -- "${scratch}"
             mkdir -p -- "${scratch}/tree"
             : > "${scratch}/expected"
-            while read -r mode digest encoded extra; do
-              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+            while read -r kind mode digest encoded target_encoded extra; do
+              [[ -z "${extra}" && "${kind}" =~ ^(f|l|d)$ && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
               [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
               [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              if [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* && "$(printf '%s' "${target}" | openssl base64 -A)" == "${target_encoded}" ]]
+                safe_link_target "$(dirname -- "${path}")" "${target}"
+                [[ "$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)" == "${digest}" ]]
+              else
+                [[ "${target_encoded}" == - ]]
+              fi
               printf '%s\n' "${path}" >> "${scratch}/expected"
             done < "${root}/manifest.txt"
             LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
             [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
-            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            tar -tf "${root}/cache.tar" | sed 's:/$::' | LC_ALL=C sort -u > "${scratch}/actual"
             diff -u "${scratch}/expected" "${scratch}/actual"
             tar -xf "${root}/cache.tar" -C "${scratch}/tree"
-            while read -r mode digest encoded extra; do
+            while read -r kind mode digest encoded target_encoded extra; do
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
-              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
               actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
               [[ "${actual_mode}" == "${mode}" ]]
-              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              if [[ "${kind}" == f ]]; then
+                [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" && "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              elif [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -L "${scratch}/tree/${path}" && "$(readlink -- "${scratch}/tree/${path}")" == "${target}" ]]
+              else
+                [[ -d "${scratch}/tree/${path}" && -z "$(find "${scratch}/tree/${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+              fi
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
@@ -1296,23 +1422,44 @@ jobs:
           CACHE_HIT: post
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           shopt -s globstar nullglob
           destination='.velnor-proof/post/velnor/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
           : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+            if [[ -e "${root}" || -L "${root}" ]]; then
+              find "${root}" \( -type f -o -type l -o \( -type d -empty \) \) -print0
+            fi
           done | LC_ALL=C sort -zu > "${destination}/files.nul"
           : > "${destination}/manifest.txt"
           while IFS= read -r -d '' file; do
             [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
             mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
-            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
             encoded="$(printf '%s' "${file}" | openssl base64 -A)"
-            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+            if [[ -L "${file}" ]]; then
+              kind=l; target="$(readlink -- "${file}")"
+              [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* ]] || { echo 'unsafe cache symlink target' >&2; exit 1; }
+              safe_link_target "$(dirname -- "${file}")" "${target}" || { echo 'escaping cache symlink target' >&2; exit 1; }
+              digest="$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)"
+              target_encoded="$(printf '%s' "${target}" | openssl base64 -A)"
+            elif [[ -f "${file}" ]]; then
+              kind=f; digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"; target_encoded=-
+            elif [[ -d "${file}" ]]; then
+              kind=d; digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target_encoded=-
+            else
+              echo 'unsupported cache entry type' >&2; exit 1
+            fi
+            printf '%s %s %s %s %s\n' "${kind}" "${mode}" "${digest}" "${encoded}" "${target_encoded}"
           done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
-          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          tar --null --files-from="${destination}/files.nul" --no-recursion --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
@@ -1394,6 +1541,13 @@ jobs:
           EXPECTED_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
             for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
@@ -1409,28 +1563,42 @@ jobs:
             [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
-            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            local scratch="${root}.verified" kind mode digest encoded target_encoded extra path target actual_mode
             rm -rf -- "${scratch}"
             mkdir -p -- "${scratch}/tree"
             : > "${scratch}/expected"
-            while read -r mode digest encoded extra; do
-              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+            while read -r kind mode digest encoded target_encoded extra; do
+              [[ -z "${extra}" && "${kind}" =~ ^(f|l|d)$ && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
               [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
               [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              if [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* && "$(printf '%s' "${target}" | openssl base64 -A)" == "${target_encoded}" ]]
+                safe_link_target "$(dirname -- "${path}")" "${target}"
+                [[ "$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)" == "${digest}" ]]
+              else
+                [[ "${target_encoded}" == - ]]
+              fi
               printf '%s\n' "${path}" >> "${scratch}/expected"
             done < "${root}/manifest.txt"
             LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
             [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
-            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            tar -tf "${root}/cache.tar" | sed 's:/$::' | LC_ALL=C sort -u > "${scratch}/actual"
             diff -u "${scratch}/expected" "${scratch}/actual"
             tar -xf "${root}/cache.tar" -C "${scratch}/tree"
-            while read -r mode digest encoded extra; do
+            while read -r kind mode digest encoded target_encoded extra; do
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
-              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
               actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
               [[ "${actual_mode}" == "${mode}" ]]
-              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              if [[ "${kind}" == f ]]; then
+                [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" && "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              elif [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -L "${scratch}/tree/${path}" && "$(readlink -- "${scratch}/tree/${path}")" == "${target}" ]]
+              else
+                [[ -d "${scratch}/tree/${path}" && -z "$(find "${scratch}/tree/${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+              fi
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
@@ -1484,6 +1652,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
             for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
@@ -1499,28 +1674,42 @@ jobs:
             [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
-            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            local scratch="${root}.verified" kind mode digest encoded target_encoded extra path target actual_mode
             rm -rf -- "${scratch}"
             mkdir -p -- "${scratch}/tree"
             : > "${scratch}/expected"
-            while read -r mode digest encoded extra; do
-              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+            while read -r kind mode digest encoded target_encoded extra; do
+              [[ -z "${extra}" && "${kind}" =~ ^(f|l|d)$ && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
               [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
               [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              if [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* && "$(printf '%s' "${target}" | openssl base64 -A)" == "${target_encoded}" ]]
+                safe_link_target "$(dirname -- "${path}")" "${target}"
+                [[ "$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)" == "${digest}" ]]
+              else
+                [[ "${target_encoded}" == - ]]
+              fi
               printf '%s\n' "${path}" >> "${scratch}/expected"
             done < "${root}/manifest.txt"
             LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
             [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
-            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            tar -tf "${root}/cache.tar" | sed 's:/$::' | LC_ALL=C sort -u > "${scratch}/actual"
             diff -u "${scratch}/expected" "${scratch}/actual"
             tar -xf "${root}/cache.tar" -C "${scratch}/tree"
-            while read -r mode digest encoded extra; do
+            while read -r kind mode digest encoded target_encoded extra; do
               path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
-              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
               actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
               [[ "${actual_mode}" == "${mode}" ]]
-              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              if [[ "${kind}" == f ]]; then
+                [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" && "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+              elif [[ "${kind}" == l ]]; then
+                target="$(printf '%s' "${target_encoded}" | openssl base64 -d -A)"
+                [[ -L "${scratch}/tree/${path}" && "$(readlink -- "${scratch}/tree/${path}")" == "${target}" ]]
+              else
+                [[ -d "${scratch}/tree/${path}" && -z "$(find "${scratch}/tree/${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+              fi
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
