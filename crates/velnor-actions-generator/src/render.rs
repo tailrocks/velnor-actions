@@ -725,19 +725,42 @@ fn render_cache_proof_jobs(
     b.run_block(8, &barrier_script(&declarations));
     b.blank();
 
-    for (job, runner, lane, restore_job) in [
-        (
-            "github_execute",
-            "ubuntu-latest",
-            "github",
-            "github_restore",
-        ),
-        (
-            "velnor_execute",
-            "${{ 'velnor-trusted' }}",
-            "velnor",
-            "velnor_restore",
-        ),
+    let required_peak = declarations
+        .iter()
+        .try_fold(0_u64, |total, cache| total.checked_add(cache.peak_bytes))
+        .expect("validated cache peaks fit u64");
+    b.line(2, "reservation_barrier:");
+    b.line(4, "name: Velnor reservation barrier");
+    b.line(4, "needs: restore_barrier");
+    b.line(4, "if: ${{ inputs.benchmark_campaign != '' }}");
+    b.line(4, "runs-on: ${{ 'velnor-trusted' }}");
+    b.line(4, "timeout-minutes: 10");
+    b.line(4, "outputs:");
+    b.line(6, "contract: ${{ steps.reserve.outputs.contract }}");
+    b.line(
+        6,
+        "record_digest: ${{ steps.reserve.outputs.record_digest }}",
+    );
+    b.line(4, "steps:");
+    b.line(6, "- name: Validate atomic all-slots-ready reservation");
+    b.line(8, "id: reserve");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    b.line(10, "EXPECTED_OWNER: ${{ github.repository }}");
+    b.line(10, "EXPECTED_CAMPAIGN: ${{ inputs.benchmark_campaign }}");
+    b.line(10, "EXPECTED_WAVE: ${{ inputs.benchmark_wave }}");
+    b.line(
+        10,
+        "EXPECTED_RESERVATION: ${{ inputs.benchmark_reservation }}",
+    );
+    b.line(10, "EXPECTED_PARTICIPANTS: ${{ inputs.benchmark_fanout }}");
+    b.line(10, &format!("REQUIRED_PEAK_BYTES: {required_peak}"));
+    b.run_block(8, RESERVATION_BARRIER_SCRIPT);
+    b.blank();
+
+    for (job, runner, lane) in [
+        ("github_execute", "ubuntu-latest", "github"),
+        ("velnor_execute", "${{ 'velnor-trusted' }}", "velnor"),
     ] {
         b.line(2, &format!("{job}:"));
         b.line(
@@ -746,10 +769,12 @@ fn render_cache_proof_jobs(
         );
         b.line(4, "needs:");
         b.line(6, "- restore_barrier");
-        b.line(6, &format!("- {restore_job}"));
+        b.line(6, "- reservation_barrier");
+        b.line(6, "- github_restore");
+        b.line(6, "- velnor_restore");
         b.line(
             4,
-            "if: ${{ inputs.benchmark_campaign != '' || inputs.cache_proof_id != '' }}",
+            "if: ${{ always() && needs.restore_barrier.result == 'success' && (inputs.cache_proof_id != '' || (inputs.benchmark_campaign != '' && needs.reservation_barrier.result == 'success' && needs.reservation_barrier.outputs.contract == 'success')) }}",
         );
         b.line(4, "strategy:");
         b.line(6, "fail-fast: false");
@@ -761,6 +786,25 @@ fn render_cache_proof_jobs(
         b.line(4, &format!("runs-on: {runner}"));
         b.line(4, "timeout-minutes: 45");
         b.line(4, "steps:");
+        if lane == "velnor" {
+            b.line(6, "- name: Validate distinct Velnor slot grant");
+            b.line(8, "if: ${{ inputs.benchmark_campaign != '' }}");
+            b.line(8, "shell: bash");
+            b.line(8, "env:");
+            b.line(
+                10,
+                "EXPECTED_RECORD_DIGEST: ${{ needs.reservation_barrier.outputs.record_digest }}",
+            );
+            b.line(10, "EXPECTED_CAMPAIGN: ${{ inputs.benchmark_campaign }}");
+            b.line(10, "EXPECTED_WAVE: ${{ inputs.benchmark_wave }}");
+            b.line(
+                10,
+                "EXPECTED_RESERVATION: ${{ inputs.benchmark_reservation }}",
+            );
+            b.line(10, "EXPECTED_SLOT: ${{ matrix.slot }}");
+            b.line(10, &format!("REQUIRED_PEAK_BYTES: {required_peak}"));
+            b.run_block(8, RESERVATION_GRANT_SCRIPT);
+        }
         b.line(6, "- name: Check out repository into fresh workspace");
         b.line(
             8,
@@ -1101,6 +1145,51 @@ correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
 printf '{"schema":1,"lane":"%s","slot":%s,"cpu_ms":%s,"peak_memory_kib":%s,"disk_bytes":%s,"cache_restore_ms":0,"cache_save_ms":0,"cache_copy_ms":0,"cache_lock_wait_ms":0,"disk_latency_ms":0,"psi_cpu":"%s","cache_result":"proof","cache_bytes":%s,"cache_files":0,"output_digest":"pending","correlation":"%s"}\n' \
   "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
   > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+"#;
+
+/// Workflow side of the Plan-007 Velnor atomic reservation/barrier schema.
+/// The trusted runner injects the JSON record; repository bytes never supply it.
+pub const RESERVATION_BARRIER_SCRIPT: &str = r#"set -euo pipefail
+fail() { echo "reservation contract: $*" >&2; exit 1; }
+record="${VELNOR_BENCHMARK_COORDINATOR_V1-}"
+[[ -n "${record}" ]] || fail "missing coordinator record"
+for number in "${EXPECTED_PARTICIPANTS}" "${REQUIRED_PEAK_BYTES}"; do
+  [[ "${number}" =~ ^[1-9][0-9]*$ && ${#number} -le 19 ]] || fail "invalid numeric contract"
+done
+[[ "${EXPECTED_PARTICIPANTS}" == 1 || "${EXPECTED_PARTICIPANTS}" == 8 ]] || fail "participant count must be 1 or 8"
+jq -e 'keys == ["campaign","expires_at_epoch","owner","participant_count","ready_count","reservation_id","schema","slots","state","wave"]' <<<"${record}" >/dev/null || fail "unknown or missing coordinator field"
+jq -e --arg owner "${EXPECTED_OWNER}" --arg campaign "${EXPECTED_CAMPAIGN}" --arg wave "${EXPECTED_WAVE}" --arg reservation "${EXPECTED_RESERVATION}" --argjson count "${EXPECTED_PARTICIPANTS}" --argjson peak "${REQUIRED_PEAK_BYTES}" '
+  .schema == 1 and .owner == $owner and .campaign == $campaign and .wave == $wave and
+  .reservation_id == $reservation and .state == "released" and
+  .participant_count == $count and .ready_count == $count and
+  (.expires_at_epoch | type == "number") and
+  (.slots | type == "array" and length == $count) and
+  ([range(0; $count)] as $expected | ([.slots[].slot] | sort) == $expected) and
+  ([.slots[].materialization_id] | length == (unique | length)) and
+  (all(.slots[]; (keys == ["materialization_id","reserved_bytes","slot"]) and
+    (.materialization_id | type == "string" and test("^[a-z0-9][a-z0-9._:-]{7,127}$")) and
+    (.reserved_bytes | type == "number" and . >= $peak)))
+' <<<"${record}" >/dev/null || fail "coordinator identity, slot set, or peak reservation mismatch"
+expires="$(jq -r '.expires_at_epoch' <<<"${record}")"
+[[ "${expires}" =~ ^[0-9]+$ && "${expires}" -gt "$(date +%s)" ]] || fail "coordinator record expired"
+canonical="$(jq -cS . <<<"${record}")"
+record_digest="$(printf '%s' "${canonical}" | sha256sum | cut -d' ' -f1)"
+printf 'contract=success\nrecord_digest=%s\n' "${record_digest}" >> "${GITHUB_OUTPUT}"
+"#;
+
+/// Per-executor grant bound to the released coordinator record and matrix slot.
+pub const RESERVATION_GRANT_SCRIPT: &str = r#"set -euo pipefail
+fail() { echo "reservation grant: $*" >&2; exit 1; }
+grant="${VELNOR_BENCHMARK_GRANT_V1-}"
+[[ -n "${grant}" ]] || fail "missing slot grant"
+jq -e 'keys == ["campaign","coordinator_digest","materialization_id","reservation_id","reserved_bytes","schema","slot","state","wave"]' <<<"${grant}" >/dev/null || fail "unknown or missing grant field"
+jq -e --arg digest "${EXPECTED_RECORD_DIGEST}" --arg campaign "${EXPECTED_CAMPAIGN}" --arg wave "${EXPECTED_WAVE}" --arg reservation "${EXPECTED_RESERVATION}" --argjson slot "${EXPECTED_SLOT}" --argjson peak "${REQUIRED_PEAK_BYTES}" '
+  .schema == 1 and .coordinator_digest == $digest and .campaign == $campaign and
+  .wave == $wave and .reservation_id == $reservation and .slot == $slot and
+  .state == "released" and
+  (.materialization_id | type == "string" and test("^[a-z0-9][a-z0-9._:-]{7,127}$")) and
+  (.reserved_bytes | type == "number" and . >= $peak)
+' <<<"${grant}" >/dev/null || fail "grant correlation, slot, or peak mismatch"
 "#;
 
 /// Fail-closed final truth table for the cache proof DAG.

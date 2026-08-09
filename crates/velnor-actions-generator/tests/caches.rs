@@ -538,3 +538,97 @@ fn immutable_evidence_verifier_rejects_content_identity_and_set_tampering() {
     ));
     assert!(!run_evidence_verifier("printf 'velnor\\n' > evidence/lane"));
 }
+
+fn reservation_record(participants: usize) -> String {
+    let slots = (0..participants)
+        .map(|slot| {
+            format!(
+                r#"{{"materialization_id":"materialization-{slot:02}","reserved_bytes":9000,"slot":{slot}}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    format!(
+        r#"{{"campaign":"campaign-0001","expires_at_epoch":{expires},"owner":"tailrocks/example","participant_count":{participants},"ready_count":{participants},"reservation_id":"reservation-0001","schema":1,"slots":[{slots}],"state":"released","wave":"wave-0001"}}"#
+    )
+}
+
+fn run_reservation_barrier(record: &str, participants: usize) -> bool {
+    let output = common::temp_dir("reservation-barrier").join("output");
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::RESERVATION_BARRIER_SCRIPT)
+        .env("VELNOR_BENCHMARK_COORDINATOR_V1", record)
+        .env("EXPECTED_OWNER", "tailrocks/example")
+        .env("EXPECTED_CAMPAIGN", "campaign-0001")
+        .env("EXPECTED_WAVE", "wave-0001")
+        .env("EXPECTED_RESERVATION", "reservation-0001")
+        .env("EXPECTED_PARTICIPANTS", participants.to_string())
+        .env("REQUIRED_PEAK_BYTES", "8192")
+        .env("GITHUB_OUTPUT", output)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn reservation_barrier_enforces_exact_one_or_eight_slot_release() {
+    assert!(run_reservation_barrier(&reservation_record(1), 1));
+    assert!(run_reservation_barrier(&reservation_record(8), 8));
+    assert!(!run_reservation_barrier(&reservation_record(1), 8));
+    assert!(!run_reservation_barrier(&reservation_record(2), 2));
+    assert!(!run_reservation_barrier(
+        &reservation_record(8).replace("materialization-07", "materialization-06"),
+        8
+    ));
+    assert!(!run_reservation_barrier(
+        &reservation_record(8).replace("\"slot\":7", "\"slot\":6"),
+        8
+    ));
+    assert!(!run_reservation_barrier(
+        &reservation_record(8).replace("\"reserved_bytes\":9000", "\"reserved_bytes\":1"),
+        8
+    ));
+    assert!(!run_reservation_barrier(
+        &reservation_record(1).replace("campaign-0001", "campaign-wrong"),
+        1
+    ));
+}
+
+fn run_reservation_grant(grant: &str, slot: usize) -> bool {
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::RESERVATION_GRANT_SCRIPT)
+        .env("VELNOR_BENCHMARK_GRANT_V1", grant)
+        .env("EXPECTED_RECORD_DIGEST", DIGEST_A)
+        .env("EXPECTED_CAMPAIGN", "campaign-0001")
+        .env("EXPECTED_WAVE", "wave-0001")
+        .env("EXPECTED_RESERVATION", "reservation-0001")
+        .env("EXPECTED_SLOT", slot.to_string())
+        .env("REQUIRED_PEAK_BYTES", "8192")
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn reservation_grant_is_bound_to_record_slot_and_peak() {
+    let grant = format!(
+        r#"{{"campaign":"campaign-0001","coordinator_digest":"{DIGEST_A}","materialization_id":"materialization-03","reservation_id":"reservation-0001","reserved_bytes":9000,"schema":1,"slot":3,"state":"released","wave":"wave-0001"}}"#
+    );
+    assert!(run_reservation_grant(&grant, 3));
+    assert!(!run_reservation_grant(&grant, 2));
+    assert!(!run_reservation_grant(
+        &grant.replace(DIGEST_A, DIGEST_B),
+        3
+    ));
+    assert!(!run_reservation_grant(
+        &grant.replace("\"reserved_bytes\":9000", "\"reserved_bytes\":1"),
+        3
+    ));
+}
