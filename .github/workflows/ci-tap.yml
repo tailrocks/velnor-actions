@@ -938,6 +938,14 @@ jobs:
             done < "${root}/manifest.txt"
             rm -rf -- "${scratch}"
           }
+          verify_cache_temperature() {
+            local temperature="$1" github_hit="$2" velnor_hit="$3"
+            case "${temperature}" in
+              cold) [[ "${github_hit}" != true && "${velnor_hit}" != true ]] ;;
+              warm) [[ "${github_hit}" == true && "${velnor_hit}" == true ]] ;;
+              *) return 1 ;;
+            esac
+          }
           selected=0
           if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CACHE_ID}" ]]; then
             selected=$((selected + 1))
@@ -951,12 +959,7 @@ jobs:
             test "$(cat "${github}/archive.sha256")" = "$(cat "${velnor}/archive.sha256")"
             test "$(cat "${github}/manifest.sha256")" = "$(cat "${velnor}/manifest.sha256")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
-              github_hit="$(cat "${github}/hit")"; velnor_hit="$(cat "${velnor}/hit")"
-              if [[ "${CACHE_TEMPERATURE}" == cold ]]; then
-                [[ "${github_hit}" != true && "${velnor_hit}" != true ]]
-              else
-                [[ "${github_hit}" == true && "${velnor_hit}" == true ]]
-              fi
+              verify_cache_temperature "${CACHE_TEMPERATURE}" "$(cat "${github}/hit")" "$(cat "${velnor}/hit")"
             fi
           fi
           [[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }
