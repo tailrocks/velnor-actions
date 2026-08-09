@@ -238,3 +238,41 @@ fn optional_operations_fail_closed_before_project_commands() {
         ("RECOVERY_PROOF_ID", "recovery-deadbeef-operation"),
     ]));
 }
+
+#[test]
+fn parsed_workflows_bind_recovery_permissions_and_unmerged_cache_isolation() {
+    let contract = velnor_actions_generator::cache::CacheContract::load(
+        &common::repo_root().join("fleet").join("caches.toml"),
+    )
+    .expect("cache contract");
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    for class in [
+        RepositoryClass::Code,
+        RepositoryClass::Tap,
+        RepositoryClass::Apt,
+        RepositoryClass::Fixture,
+    ] {
+        let workflow = velnor_actions_generator::render::callable_workflow(
+            manifest.class(class),
+            &contract,
+            DUMMY_SHA,
+        );
+        let documents = yaml_rust2::YamlLoader::load_from_str(&workflow).expect("valid YAML");
+        assert_eq!(documents.len(), 1);
+        let root = &documents[0];
+        let permissions = &root["jobs"]["validate-request"]["permissions"];
+        assert_eq!(permissions["actions"].as_str(), Some("read"));
+        assert_eq!(permissions["contents"].as_str(), Some("read"));
+        assert_eq!(permissions["pull-requests"].as_str(), Some("read"));
+
+        let rendered = workflow.as_str();
+        assert!(rendered.contains("Check out protected base for unmerged cache identity"));
+        assert!(rendered.contains("Publish isolated unmerged"));
+        assert!(rendered.contains("actions/cache/save@"));
+        assert!(rendered.contains("/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"));
+        assert!(!rendered.contains(
+            "if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}\n        uses: actions/cache@"
+        ));
+    }
+}

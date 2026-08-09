@@ -1131,6 +1131,25 @@ fn lane_steps(
         8,
         &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
     );
+    b.line(
+        6,
+        "- name: Check out protected base for unmerged cache identity",
+    );
+    b.line(
+        8,
+        "if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+    );
+    b.line(
+        8,
+        &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+    );
+    b.line(8, "with:");
+    b.line(
+        10,
+        "ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+    );
+    b.line(10, "path: .velnor-protected-base");
+    b.line(10, "persist-credentials: false");
     if lane == Lane::Velnor {
         for cache in caches
             .declarations()
@@ -1226,6 +1245,17 @@ fn lane_steps(
             .join(", ");
         b.line(10, &format!("{env}_TOOLCHAIN: ${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}"));
         b.line(10, &format!("{env}_LOCK: ${{{{ hashFiles({globs}) }}}}"));
+        let base_globs = cache
+            .lock_globs
+            .iter()
+            .map(|glob| format!("'.velnor-protected-base/{glob}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        b.line(10, &format!("{env}_BASE_TOOLCHAIN: ${{{{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}}}"));
+        b.line(
+            10,
+            &format!("{env}_BASE_LOCK: ${{{{ hashFiles({base_globs}) }}}}"),
+        );
         b.line(
             10,
             &format!(
@@ -1239,10 +1269,17 @@ fn lane_steps(
         let env = cache.id.replace('-', "_").to_ascii_uppercase();
         let output = cache.id.as_str();
         key_script.push_str(&format!(
-            "for value in \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]] || {{ echo 'cache key digest missing or invalid' >&2; exit 1; }}; done\nprintf '{output}-toolchain=%s\\n{output}-lock=%s\\n{output}-phase=%s\\n' \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
+            "toolchain=\"${{{env}_TOOLCHAIN}}\"; lock=\"${{{env}_LOCK}}\"\nif [[ \"${{GITHUB_EVENT_NAME}}\" == pull_request || \"${{GITHUB_EVENT_NAME}}\" == merge_group ]]; then toolchain=\"${{{env}_BASE_TOOLCHAIN}}\"; lock=\"${{{env}_BASE_LOCK}}\"; fi\nfor value in \"${{toolchain}}\" \"${{lock}}\" \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]] || {{ echo 'cache key digest missing or invalid' >&2; exit 1; }}; done\nprintf '{output}-toolchain=%s\\n{output}-lock=%s\\n{output}-current-toolchain=%s\\n{output}-current-lock=%s\\n{output}-phase=%s\\n' \"${{toolchain}}\" \"${{lock}}\" \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
         ));
     }
     b.run_block(8, &key_script);
+    b.line(6, "- name: Remove protected-base checkout");
+    b.line(
+        8,
+        "if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+    );
+    b.line(8, "shell: bash");
+    b.run_block(8, "rm -rf -- .velnor-protected-base");
     for cache in declarations {
         if lane == Lane::Velnor {
             cache_step(
@@ -1250,17 +1287,38 @@ fn lane_steps(
                 contract.class,
                 cache,
                 "restore",
-                Some("${{ inputs.lane == 'both' }}"),
+                Some(
+                    "${{ inputs.lane == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+                ),
             );
             cache_step(
                 b,
                 contract.class,
                 cache,
                 "full",
-                Some("${{ inputs.lane != 'both' }}"),
+                Some(
+                    "${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
+                ),
             );
         } else {
-            cache_step(b, contract.class, cache, "full", None);
+            cache_step(
+                b,
+                contract.class,
+                cache,
+                "restore",
+                Some(
+                    "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+                ),
+            );
+            cache_step(
+                b,
+                contract.class,
+                cache,
+                "full",
+                Some(
+                    "${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
+                ),
+            );
         }
     }
     b.line(6, "- name: Set up mise toolchain");
@@ -1272,6 +1330,18 @@ fn lane_steps(
         if gate.applicability == crate::model::Applicability::Both {
             gate_step(b, gate, run_gate);
         }
+    }
+    for cache in caches
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == contract.class)
+    {
+        let condition = if lane == Lane::Velnor {
+            "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.lane != 'both' }}"
+        } else {
+            "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}"
+        };
+        cache_step(b, contract.class, cache, "save", Some(condition));
     }
     b.line(6, "- name: Emit lane contract");
     b.line(8, "id: aggregate");
@@ -1291,6 +1361,8 @@ fn cache_step(
             "- name: {} {} cache",
             if mode == "restore" {
                 "Restore-only"
+            } else if mode == "save" {
+                "Publish isolated unmerged"
             } else {
                 "Restore and publish"
             },
@@ -1300,7 +1372,11 @@ fn cache_step(
     if let Some(condition) = condition {
         b.line(8, &format!("if: {condition}"));
     }
-    let path = if mode == "restore" { "/restore" } else { "" };
+    let path = if mode == "restore" || mode == "save" {
+        format!("/{mode}")
+    } else {
+        String::new()
+    };
     b.line(
         8,
         &format!("uses: actions/cache{path}@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
@@ -1311,13 +1387,11 @@ fn cache_step(
         b.line(12, path);
     }
     let id = cache.id.as_str();
-    b.line(
-        10,
-        &format!(
-            "key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}",
-            class.code()
-        ),
-    );
+    if mode == "save" {
+        b.line(10, &format!("key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-current-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-current-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}/unmerged-${{{{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}}}", class.code()));
+    } else {
+        b.line(10, &format!("key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}", class.code()));
+    }
     if mode == "full" && cache.compatible_phase_prefix {
         b.line(10, "restore-keys: |");
         b.line(

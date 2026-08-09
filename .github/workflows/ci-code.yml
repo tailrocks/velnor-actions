@@ -174,6 +174,13 @@ jobs:
           echo 'policy: public unmerged-code routes the Velnor lane to GitHub-hosted execution'
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out protected base for unmerged cache identity
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: .velnor-protected-base
+          persist-credentials: false
       - name: Capture tools Velnor cache authority
         id: velnor-authority-tools
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
@@ -345,23 +352,40 @@ jobs:
         env:
           TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          TOOLS_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          TOOLS_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           TOOLS_PHASE: 1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
           DEPENDENCIES_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           DEPENDENCIES_LOCK: ${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}
+          DEPENDENCIES_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          DEPENDENCIES_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/**/.cargo/config.toml', '.velnor-protected-base/**/.npmrc', '.velnor-protected-base/**/.yarnrc.yml', '.velnor-protected-base/**/Cargo.lock', '.velnor-protected-base/**/Cargo.toml', '.velnor-protected-base/**/build.gradle', '.velnor-protected-base/**/build.gradle.kts', '.velnor-protected-base/**/bun.lock', '.velnor-protected-base/**/bun.lockb', '.velnor-protected-base/**/bunfig.toml', '.velnor-protected-base/**/gradle.lockfile', '.velnor-protected-base/**/gradle.properties', '.velnor-protected-base/**/gradle/libs.versions.toml', '.velnor-protected-base/**/gradle-wrapper.properties', '.velnor-protected-base/**/package-lock.json', '.velnor-protected-base/**/package.json', '.velnor-protected-base/**/pnpm-lock.yaml', '.velnor-protected-base/**/pnpm-workspace.yaml', '.velnor-protected-base/**/settings.gradle', '.velnor-protected-base/**/settings.gradle.kts', '.velnor-protected-base/**/yarn.lock', '.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml') }}
           DEPENDENCIES_PHASE: 44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
           BUILD_OUTPUT_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           BUILD_OUTPUT_LOCK: ${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          BUILD_OUTPUT_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          BUILD_OUTPUT_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/**/.cargo/config.toml', '.velnor-protected-base/**/Cargo.lock', '.velnor-protected-base/**/Cargo.toml', '.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           BUILD_OUTPUT_PHASE: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
         run: |
           set -euo pipefail
-          for value in "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'tools-toolchain=%s\ntools-lock=%s\ntools-phase=%s\n' "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}" >> "${GITHUB_OUTPUT}"
-          for value in "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'dependencies-toolchain=%s\ndependencies-lock=%s\ndependencies-phase=%s\n' "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}" >> "${GITHUB_OUTPUT}"
-          for value in "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'build-output-toolchain=%s\nbuild-output-lock=%s\nbuild-output-phase=%s\n' "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${TOOLS_TOOLCHAIN}"; lock="${TOOLS_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${TOOLS_BASE_TOOLCHAIN}"; lock="${TOOLS_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'tools-toolchain=%s\ntools-lock=%s\ntools-current-toolchain=%s\ntools-current-lock=%s\ntools-phase=%s\n' "${toolchain}" "${lock}" "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${DEPENDENCIES_TOOLCHAIN}"; lock="${DEPENDENCIES_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${DEPENDENCIES_BASE_TOOLCHAIN}"; lock="${DEPENDENCIES_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'dependencies-toolchain=%s\ndependencies-lock=%s\ndependencies-current-toolchain=%s\ndependencies-current-lock=%s\ndependencies-phase=%s\n' "${toolchain}" "${lock}" "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${BUILD_OUTPUT_TOOLCHAIN}"; lock="${BUILD_OUTPUT_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${BUILD_OUTPUT_BASE_TOOLCHAIN}"; lock="${BUILD_OUTPUT_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'build-output-toolchain=%s\nbuild-output-lock=%s\nbuild-output-current-toolchain=%s\nbuild-output-current-lock=%s\nbuild-output-phase=%s\n' "${toolchain}" "${lock}" "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}" >> "${GITHUB_OUTPUT}"
+      - name: Remove protected-base checkout
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          rm -rf -- .velnor-protected-base
       - name: Restore-only tools cache
-        if: ${{ inputs.lane == 'both' }}
+        if: ${{ inputs.lane == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -369,7 +393,7 @@ jobs:
             .local/share/mise/installs
           key: ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
       - name: Restore and publish tools cache
-        if: ${{ inputs.lane != 'both' }}
+        if: ${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -379,7 +403,7 @@ jobs:
           restore-keys: |
             ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/
       - name: Restore-only dependencies cache
-        if: ${{ inputs.lane == 'both' }}
+        if: ${{ inputs.lane == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -389,7 +413,7 @@ jobs:
             **/node_modules
           key: ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-lock'] }}/${{ steps.cache-keys.outputs['dependencies-phase'] }}
       - name: Restore and publish dependencies cache
-        if: ${{ inputs.lane != 'both' }}
+        if: ${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -401,7 +425,7 @@ jobs:
           restore-keys: |
             ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-lock'] }}/
       - name: Restore-only build-output cache
-        if: ${{ inputs.lane == 'both' }}
+        if: ${{ inputs.lane == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -409,7 +433,7 @@ jobs:
             **/target
           key: ci-v1/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['build-output-toolchain'] }}/${{ steps.cache-keys.outputs['build-output-lock'] }}/${{ steps.cache-keys.outputs['build-output-phase'] }}
       - name: Restore and publish build-output cache
-        if: ${{ inputs.lane != 'both' }}
+        if: ${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -445,6 +469,32 @@ jobs:
         with:
           name: format
           command: mise run fmt
+      - name: Publish isolated unmerged tools cache
+        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.lane != 'both' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/mise
+            .local/share/mise/installs
+          key: ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      - name: Publish isolated unmerged dependencies cache
+        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.lane != 'both' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cargo/git
+            .cargo/registry
+            .gradle/caches
+            **/node_modules
+          key: ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-current-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-current-lock'] }}/${{ steps.cache-keys.outputs['dependencies-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      - name: Publish isolated unmerged build-output cache
+        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.lane != 'both' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target
+            **/target
+          key: ci-v1/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['build-output-current-toolchain'] }}/${{ steps.cache-keys.outputs['build-output-current-lock'] }}/${{ steps.cache-keys.outputs['build-output-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
       - name: Emit lane contract
         id: aggregate
         uses: tailrocks/velnor-actions/actions/aggregate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
@@ -460,28 +510,61 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out protected base for unmerged cache identity
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: .velnor-protected-base
+          persist-credentials: false
       - name: Derive bounded cache keys
         id: cache-keys
         shell: bash
         env:
           TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          TOOLS_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          TOOLS_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           TOOLS_PHASE: 1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
           DEPENDENCIES_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           DEPENDENCIES_LOCK: ${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}
+          DEPENDENCIES_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          DEPENDENCIES_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/**/.cargo/config.toml', '.velnor-protected-base/**/.npmrc', '.velnor-protected-base/**/.yarnrc.yml', '.velnor-protected-base/**/Cargo.lock', '.velnor-protected-base/**/Cargo.toml', '.velnor-protected-base/**/build.gradle', '.velnor-protected-base/**/build.gradle.kts', '.velnor-protected-base/**/bun.lock', '.velnor-protected-base/**/bun.lockb', '.velnor-protected-base/**/bunfig.toml', '.velnor-protected-base/**/gradle.lockfile', '.velnor-protected-base/**/gradle.properties', '.velnor-protected-base/**/gradle/libs.versions.toml', '.velnor-protected-base/**/gradle-wrapper.properties', '.velnor-protected-base/**/package-lock.json', '.velnor-protected-base/**/package.json', '.velnor-protected-base/**/pnpm-lock.yaml', '.velnor-protected-base/**/pnpm-workspace.yaml', '.velnor-protected-base/**/settings.gradle', '.velnor-protected-base/**/settings.gradle.kts', '.velnor-protected-base/**/yarn.lock', '.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml') }}
           DEPENDENCIES_PHASE: 44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
           BUILD_OUTPUT_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
           BUILD_OUTPUT_LOCK: ${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          BUILD_OUTPUT_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
+          BUILD_OUTPUT_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/**/.cargo/config.toml', '.velnor-protected-base/**/Cargo.lock', '.velnor-protected-base/**/Cargo.toml', '.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           BUILD_OUTPUT_PHASE: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
         run: |
           set -euo pipefail
-          for value in "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'tools-toolchain=%s\ntools-lock=%s\ntools-phase=%s\n' "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}" >> "${GITHUB_OUTPUT}"
-          for value in "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'dependencies-toolchain=%s\ndependencies-lock=%s\ndependencies-phase=%s\n' "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}" >> "${GITHUB_OUTPUT}"
-          for value in "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
-          printf 'build-output-toolchain=%s\nbuild-output-lock=%s\nbuild-output-phase=%s\n' "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${TOOLS_TOOLCHAIN}"; lock="${TOOLS_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${TOOLS_BASE_TOOLCHAIN}"; lock="${TOOLS_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'tools-toolchain=%s\ntools-lock=%s\ntools-current-toolchain=%s\ntools-current-lock=%s\ntools-phase=%s\n' "${toolchain}" "${lock}" "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" "${TOOLS_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${DEPENDENCIES_TOOLCHAIN}"; lock="${DEPENDENCIES_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${DEPENDENCIES_BASE_TOOLCHAIN}"; lock="${DEPENDENCIES_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'dependencies-toolchain=%s\ndependencies-lock=%s\ndependencies-current-toolchain=%s\ndependencies-current-lock=%s\ndependencies-phase=%s\n' "${toolchain}" "${lock}" "${DEPENDENCIES_TOOLCHAIN}" "${DEPENDENCIES_LOCK}" "${DEPENDENCIES_PHASE}" >> "${GITHUB_OUTPUT}"
+          toolchain="${BUILD_OUTPUT_TOOLCHAIN}"; lock="${BUILD_OUTPUT_LOCK}"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == merge_group ]]; then toolchain="${BUILD_OUTPUT_BASE_TOOLCHAIN}"; lock="${BUILD_OUTPUT_BASE_LOCK}"; fi
+          for value in "${toolchain}" "${lock}" "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'cache key digest missing or invalid' >&2; exit 1; }; done
+          printf 'build-output-toolchain=%s\nbuild-output-lock=%s\nbuild-output-current-toolchain=%s\nbuild-output-current-lock=%s\nbuild-output-phase=%s\n' "${toolchain}" "${lock}" "${BUILD_OUTPUT_TOOLCHAIN}" "${BUILD_OUTPUT_LOCK}" "${BUILD_OUTPUT_PHASE}" >> "${GITHUB_OUTPUT}"
+      - name: Remove protected-base checkout
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          rm -rf -- .velnor-protected-base
+      - name: Restore-only tools cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/mise
+            .local/share/mise/installs
+          key: ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
       - name: Restore and publish tools cache
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -490,7 +573,18 @@ jobs:
           key: ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
           restore-keys: |
             ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/
+      - name: Restore-only dependencies cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cargo/git
+            .cargo/registry
+            .gradle/caches
+            **/node_modules
+          key: ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-lock'] }}/${{ steps.cache-keys.outputs['dependencies-phase'] }}
       - name: Restore and publish dependencies cache
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -501,7 +595,16 @@ jobs:
           key: ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-lock'] }}/${{ steps.cache-keys.outputs['dependencies-phase'] }}
           restore-keys: |
             ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-lock'] }}/
+      - name: Restore-only build-output cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target
+            **/target
+          key: ci-v1/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['build-output-toolchain'] }}/${{ steps.cache-keys.outputs['build-output-lock'] }}/${{ steps.cache-keys.outputs['build-output-phase'] }}
       - name: Restore and publish build-output cache
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -537,6 +640,32 @@ jobs:
         with:
           name: format
           command: mise run fmt
+      - name: Publish isolated unmerged tools cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/mise
+            .local/share/mise/installs
+          key: ci-v1/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      - name: Publish isolated unmerged dependencies cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cargo/git
+            .cargo/registry
+            .gradle/caches
+            **/node_modules
+          key: ci-v1/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['dependencies-current-toolchain'] }}/${{ steps.cache-keys.outputs['dependencies-current-lock'] }}/${{ steps.cache-keys.outputs['dependencies-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      - name: Publish isolated unmerged build-output cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target
+            **/target
+          key: ci-v1/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['build-output-current-toolchain'] }}/${{ steps.cache-keys.outputs['build-output-current-lock'] }}/${{ steps.cache-keys.outputs['build-output-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
       - name: Emit lane contract
         id: aggregate
         uses: tailrocks/velnor-actions/actions/aggregate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
