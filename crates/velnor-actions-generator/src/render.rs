@@ -8,8 +8,9 @@
 //! replaces them atomically.
 
 use crate::RepositoryClass;
-use crate::cache::CacheContract;
+use crate::cache::{CacheContract, CacheDeclaration};
 use crate::model::{ClassContract, Gate, Lane, OWNERS};
+use sha2::{Digest, Sha256};
 
 /// The canonical fleet owner. Callable workflows pin their internal composite
 /// closure to this owner at the immutable block SHA; mirrors carry the identical
@@ -27,8 +28,8 @@ pub const CALVER_PLACEHOLDER: &str = "@CALVER@";
 const CHECKOUT_REF: &str = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const CHECKOUT_VERSION: &str = "v7.0.1";
 /// Pinned mise setup action (full 40-hex SHA) and its version comment.
-const MISE_ACTION_REF: &str = "dad1bfd3df957f44999b559dd69dc1671cb4e9ea";
-const MISE_ACTION_VERSION: &str = "v4.2.1";
+const MISE_ACTION_REF: &str = "7e36c90d9ab29c415a2384db3006f3ec8a8cc654";
+const MISE_ACTION_VERSION: &str = "v4.2.4";
 /// Pinned GitHub cache action.
 const CACHE_ACTION_REF: &str = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const CACHE_ACTION_VERSION: &str = "v6.1.0";
@@ -129,13 +130,17 @@ pub fn consumer_template(class: RepositoryClass) -> String {
     b.line(8, "required: false");
     b.line(8, "type: string");
     b.line(8, "default: \"\"");
+    consumer_auxiliary_inputs(&mut b);
     b.blank();
     b.line(0, "permissions:");
     b.line(2, "contents: read");
     b.blank();
     b.line(0, "concurrency:");
-    b.line(2, "group: ${{ github.workflow }}-${{ github.ref }}");
-    b.line(2, "cancel-in-progress: true");
+    b.line(2, "group: ${{ inputs.benchmark_campaign != '' && format('{0}-{1}-{2}', github.workflow, inputs.benchmark_campaign, inputs.benchmark_wave) || format('{0}-{1}', github.workflow, github.ref) }}");
+    b.line(
+        2,
+        "cancel-in-progress: ${{ inputs.benchmark_campaign == '' }}",
+    );
     b.blank();
     b.line(0, "jobs:");
 
@@ -159,6 +164,9 @@ pub fn consumer_template(class: RepositoryClass) -> String {
             6,
             "lane: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != '' && inputs.lane) || (github.repository_owner == 'jackin-project' && 'github') || ((github.repository_owner == 'tailrocks' || github.repository_owner == 'ChainArgos') && 'velnor') || 'invalid' }}",
         );
+        for input in AUXILIARY_INPUTS {
+            b.line(6, &format!("{input}: ${{{{ inputs.{input} || '' }}}}"));
+        }
         b.blank();
     }
 
@@ -261,6 +269,7 @@ pub fn callable_workflow(
     b.line(8, "required: false");
     b.line(8, "type: string");
     b.line(8, "default: \"\"");
+    callable_auxiliary_inputs(&mut b);
     b.line(4, "outputs:");
     b.line(6, "contract:");
     b.line(
@@ -273,10 +282,45 @@ pub fn callable_workflow(
     b.line(2, "contents: read");
     b.blank();
     b.line(0, "jobs:");
+    b.line(2, "validate-request:");
+    b.line(4, "name: validate request");
+    b.line(4, "runs-on: ubuntu-latest");
+    b.line(4, "timeout-minutes: 5");
+    b.line(4, "permissions:");
+    b.line(6, "contents: read");
+    b.line(4, "outputs:");
+    b.line(6, "correlation: ${{ steps.validate.outputs.correlation }}");
+    b.line(4, "steps:");
+    b.line(6, "- name: Authenticate optional operation");
+    b.line(8, "id: validate");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    for input in AUXILIARY_INPUTS {
+        b.line(
+            10,
+            &format!("{}: ${{{{ inputs.{input} }}}}", input.to_ascii_uppercase()),
+        );
+    }
+    b.line(10, "EVENT_NAME: ${{ github.event_name }}");
+    b.line(10, "REF_TYPE: ${{ github.ref_type }}");
+    b.line(10, "REF_PROTECTED: ${{ github.ref_protected }}");
+    b.line(10, "HEAD_SHA: ${{ github.sha }}");
+    b.line(10, "WORKFLOW_SHA: ${{ github.workflow_sha }}");
+    let cache_ids = caches
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == class)
+        .map(|cache| cache.id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    b.line(10, &format!("DECLARED_CACHE_IDS: {cache_ids}"));
+    b.run_block(8, VALIDATE_REQUEST_SCRIPT);
+    b.blank();
 
     // Velnor lane.
     b.line(2, "velnor-lane:");
     b.line(4, "name: velnor lane");
+    b.line(4, "needs: validate-request");
     b.line(
         4,
         "if: ${{ inputs.lane == 'velnor' || inputs.lane == 'both' || (inputs.lane == '' && (github.repository_owner == 'tailrocks' || github.repository_owner == 'ChainArgos')) }}",
@@ -321,6 +365,7 @@ pub fn callable_workflow(
     // GitHub-hosted lane.
     b.line(2, "github-lane:");
     b.line(4, "name: github lane");
+    b.line(4, "needs: validate-request");
     b.line(
         4,
         "if: ${{ inputs.lane == 'github' || inputs.lane == 'both' || (inputs.lane == '' && github.repository_owner == 'jackin-project') }}",
@@ -340,12 +385,45 @@ pub fn callable_workflow(
     );
     b.blank();
 
+    if contract.platform_only {
+        b.line(2, "platform-lane:");
+        b.line(4, "name: GitHub platform lane");
+        b.line(4, "needs: validate-request");
+        b.line(4, "runs-on: macos-latest");
+        b.line(4, "timeout-minutes: 30");
+        b.line(4, "outputs:");
+        b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
+        b.line(4, "steps:");
+        b.line(6, "- name: Check out repository");
+        b.line(
+            8,
+            &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+        );
+        b.line(6, "- name: Set up mise toolchain");
+        b.line(
+            8,
+            &format!("uses: jdx/mise-action@{MISE_ACTION_REF} # {MISE_ACTION_VERSION}"),
+        );
+        for gate in &contract.gates {
+            if gate.applicability == crate::model::Applicability::Github {
+                gate_step(&mut b, gate, &run_gate);
+            }
+        }
+        b.line(6, "- name: Emit platform contract");
+        b.line(8, "id: aggregate");
+        b.line(8, &format!("uses: {aggregate}"));
+        b.blank();
+    }
+
     // Lane-verdict aggregator: fail-closed positive per-lane truth table.
     b.line(2, "contract:");
     b.line(4, "name: contract");
     b.line(4, "needs:");
     b.line(6, "- velnor-lane");
     b.line(6, "- github-lane");
+    if contract.platform_only {
+        b.line(6, "- platform-lane");
+    }
     b.line(4, "if: ${{ always() }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 10");
@@ -366,10 +444,75 @@ pub fn callable_workflow(
         10,
         "GITHUB_CONTRACT: ${{ needs.github-lane.outputs.contract }}",
     );
+    b.line(
+        10,
+        &format!("PLATFORM_REQUIRED: {}", contract.platform_only),
+    );
+    if contract.platform_only {
+        b.line(10, "PLATFORM_RESULT: ${{ needs.platform-lane.result }}");
+        b.line(
+            10,
+            "PLATFORM_CONTRACT: ${{ needs.platform-lane.outputs.contract }}",
+        );
+    } else {
+        b.line(10, "PLATFORM_RESULT: skipped");
+        b.line(10, "PLATFORM_CONTRACT: \"\"");
+    }
     b.line(8, "shell: bash");
     b.run_block(8, CONTRACT_VERDICT_SCRIPT);
 
     b.finish()
+}
+
+const AUXILIARY_INPUTS: [&str; 11] = [
+    "recovery_proof_id",
+    "benchmark_campaign",
+    "benchmark_generation",
+    "benchmark_cache_id",
+    "benchmark_cache_mode",
+    "benchmark_fanout",
+    "benchmark_wave",
+    "benchmark_reservation",
+    "cache_proof_id",
+    "cache_generation",
+    "cache_temperature",
+];
+
+fn consumer_auxiliary_inputs(b: &mut Builder) {
+    for (name, description) in [
+        (
+            "recovery_proof_id",
+            "Authenticated recovery operation correlation.",
+        ),
+        (
+            "benchmark_campaign",
+            "Authenticated benchmark campaign correlation.",
+        ),
+        ("benchmark_generation", "Benchmark schema generation."),
+        ("benchmark_cache_id", "One declared cache identity."),
+        ("benchmark_cache_mode", "normal, enabled, or disabled."),
+        ("benchmark_fanout", "One or eight coordinated jobs."),
+        ("benchmark_wave", "Benchmark wave correlation."),
+        ("benchmark_reservation", "Velnor reservation correlation."),
+        ("cache_proof_id", "Authenticated cache proof correlation."),
+        ("cache_generation", "Cache schema generation 1 or 2."),
+        ("cache_temperature", "cold or warm cache truth."),
+    ] {
+        b.line(6, &format!("{name}:"));
+        b.line(8, &format!("description: \"{description}\""));
+        b.line(8, "required: false");
+        b.line(8, "type: string");
+        b.line(8, "default: \"\"");
+    }
+}
+
+fn callable_auxiliary_inputs(b: &mut Builder) {
+    for name in AUXILIARY_INPUTS {
+        b.line(6, &format!("{name}:"));
+        b.line(8, "required: false");
+        b.line(8, "type: string");
+        b.line(8, "default: \"\"");
+    }
 }
 
 fn lane_steps(
@@ -385,45 +528,60 @@ fn lane_steps(
         8,
         &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
     );
-    for cache in caches
+    let declarations = caches
         .declarations()
         .iter()
         .filter(|cache| cache.class == contract.class)
-    {
-        b.line(6, &format!("- name: Restore {} cache", cache.id));
-        b.line(
-            8,
-            &format!("uses: actions/cache@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
-        );
-        b.line(8, "with:");
-        b.line(10, "path: |");
-        for path in &cache.paths {
-            b.line(12, path);
-        }
+        .collect::<Vec<_>>();
+    b.line(6, "- name: Derive bounded cache keys");
+    b.line(8, "id: cache-keys");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    for cache in &declarations {
+        let env = cache.id.replace('-', "_").to_ascii_uppercase();
         let globs = cache
             .lock_globs
             .iter()
             .map(|glob| format!("'{glob}'"))
             .collect::<Vec<_>>()
             .join(", ");
+        b.line(10, &format!("{env}_TOOLCHAIN: ${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}"));
+        b.line(10, &format!("{env}_LOCK: ${{{{ hashFiles({globs}) }}}}"));
         b.line(
             10,
             &format!(
-                "key: ci-v1/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{}",
-                contract.class.code(),
-                cache.id,
-                cache.phase
+                "{env}_PHASE: {}",
+                hex::encode(Sha256::digest(cache.phase.as_bytes()))
             ),
         );
-        if cache.compatible_phase_prefix {
-            b.line(10, "restore-keys: |");
-            b.line(
-                12,
-                &format!(
-                    "ci-v1/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
-                    contract.class.code(), cache.id
-                ),
+    }
+    let mut key_script = String::from("set -euo pipefail\n");
+    for cache in &declarations {
+        let env = cache.id.replace('-', "_").to_ascii_uppercase();
+        let output = cache.id.as_str();
+        key_script.push_str(&format!(
+            "for value in \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]] || {{ echo 'cache key digest missing or invalid' >&2; exit 1; }}; done\nprintf '{output}-toolchain=%s\\n{output}-lock=%s\\n{output}-phase=%s\\n' \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" \"${{{env}_PHASE}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
+        ));
+    }
+    b.run_block(8, &key_script);
+    for cache in declarations {
+        if lane == Lane::Velnor {
+            cache_step(
+                b,
+                contract.class,
+                cache,
+                "restore",
+                Some("${{ inputs.lane == 'both' }}"),
             );
+            cache_step(
+                b,
+                contract.class,
+                cache,
+                "full",
+                Some("${{ inputs.lane != 'both' }}"),
+            );
+        } else {
+            cache_step(b, contract.class, cache, "full", None);
         }
     }
     b.line(6, "- name: Set up mise toolchain");
@@ -432,11 +590,65 @@ fn lane_steps(
         &format!("uses: jdx/mise-action@{MISE_ACTION_REF} # {MISE_ACTION_VERSION}"),
     );
     for gate in contract.applicable_gates(lane) {
-        gate_step(b, gate, run_gate);
+        if gate.applicability == crate::model::Applicability::Both {
+            gate_step(b, gate, run_gate);
+        }
     }
     b.line(6, "- name: Emit lane contract");
     b.line(8, "id: aggregate");
     b.line(8, &format!("uses: {aggregate}"));
+}
+
+fn cache_step(
+    b: &mut Builder,
+    class: RepositoryClass,
+    cache: &CacheDeclaration,
+    mode: &str,
+    condition: Option<&str>,
+) {
+    b.line(
+        6,
+        &format!(
+            "- name: {} {} cache",
+            if mode == "restore" {
+                "Restore-only"
+            } else {
+                "Restore and publish"
+            },
+            cache.id
+        ),
+    );
+    if let Some(condition) = condition {
+        b.line(8, &format!("if: {condition}"));
+    }
+    let path = if mode == "restore" { "/restore" } else { "" };
+    b.line(
+        8,
+        &format!("uses: actions/cache{path}@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
+    );
+    b.line(8, "with:");
+    b.line(10, "path: |");
+    for path in &cache.paths {
+        b.line(12, path);
+    }
+    let id = cache.id.as_str();
+    b.line(
+        10,
+        &format!(
+            "key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}",
+            class.code()
+        ),
+    );
+    if mode == "full" && cache.compatible_phase_prefix {
+        b.line(10, "restore-keys: |");
+        b.line(
+            12,
+            &format!(
+                "ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-lock'] }}}}/",
+                class.code()
+            ),
+        );
+    }
 }
 
 fn gate_step(b: &mut Builder, gate: &Gate, run_gate: &str) {
@@ -446,6 +658,48 @@ fn gate_step(b: &mut Builder, gate: &Gate, run_gate: &str) {
     b.line(10, &format!("name: {}", gate.name));
     b.line(10, &format!("command: {}", gate.command));
 }
+
+/// Fail-closed validator for optional recovery, benchmark, and cache-proof operations.
+pub const VALIDATE_REQUEST_SCRIPT: &str = r#"set -euo pipefail
+fail() { echo "request contract: $*" >&2; exit 1; }
+is_id() { [[ "$1" =~ ^[a-z0-9][a-z0-9._:-]{7,127}$ ]]; }
+is_declared_cache() { [[ ",${DECLARED_CACHE_IDS}," == *",$1,"* ]]; }
+protected_dispatch() {
+  [[ "${EVENT_NAME}" == "workflow_dispatch" ]] || fail "operation requires workflow_dispatch"
+  [[ "${REF_TYPE}" == "tag" && "${REF_PROTECTED}" == "true" ]] || fail "operation requires protected immutable tag"
+  [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ && "${WORKFLOW_SHA}" == "${HEAD_SHA}" ]] || fail "workflow blob does not equal protected tag target"
+}
+
+correlation="ordinary"
+if [[ -n "${RECOVERY_PROOF_ID}" ]]; then
+  [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF_TYPE}" == "branch" ]] || fail "recovery requires branch dispatch"
+  [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ && "${WORKFLOW_SHA}" == "${HEAD_SHA}" ]] || fail "recovery ref is not exact workflow head"
+  [[ "${RECOVERY_PROOF_ID}" == "recovery-${HEAD_SHA}-"* ]] || fail "recovery proof is not bound to exact head"
+  is_id "${RECOVERY_PROOF_ID}" || fail "invalid recovery proof id"
+  [[ -z "${BENCHMARK_CAMPAIGN}${CACHE_PROOF_ID}" ]] || fail "recovery cannot combine with another operation"
+  correlation="${RECOVERY_PROOF_ID}"
+elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
+  protected_dispatch
+  is_id "${BENCHMARK_CAMPAIGN}" || fail "invalid benchmark campaign"
+  [[ "${BENCHMARK_GENERATION}" == "1" ]] || fail "unknown benchmark generation"
+  is_declared_cache "${BENCHMARK_CACHE_ID}" || fail "unknown benchmark cache"
+  [[ "${BENCHMARK_CACHE_MODE}" =~ ^(normal|enabled|disabled)$ ]] || fail "unknown benchmark cache mode"
+  [[ "${BENCHMARK_FANOUT}" =~ ^(1|8)$ ]] || fail "unknown benchmark fanout"
+  is_id "${BENCHMARK_WAVE}" || fail "invalid benchmark wave"
+  is_id "${BENCHMARK_RESERVATION}" || fail "invalid benchmark reservation"
+  [[ -z "${CACHE_PROOF_ID}" ]] || fail "benchmark cannot combine with cache proof"
+  correlation="${BENCHMARK_CAMPAIGN}:${BENCHMARK_WAVE}"
+elif [[ -n "${CACHE_PROOF_ID}" ]]; then
+  protected_dispatch
+  is_id "${CACHE_PROOF_ID}" || fail "invalid cache proof id"
+  [[ "${CACHE_GENERATION}" =~ ^(1|2)$ ]] || fail "unknown cache generation"
+  [[ "${CACHE_TEMPERATURE}" =~ ^(cold|warm)$ ]] || fail "unknown cache temperature"
+  correlation="${CACHE_PROOF_ID}:${CACHE_GENERATION}:${CACHE_TEMPERATURE}"
+else
+  [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"
+fi
+printf 'correlation=%s\n' "${correlation}" >> "${GITHUB_OUTPUT}"
+"#;
 
 /// Materialize a consumer file from a committed template by atomically replacing
 /// every `@FLEET_SHA@` with `release_sha` and every `@CALVER@` with `calver`.
@@ -572,5 +826,14 @@ case "${LANE}" in
     exit 1
     ;;
 esac
+if [ "${PLATFORM_REQUIRED}" = "true" ]; then
+  if [ "${PLATFORM_RESULT}" != "success" ] || [ "${PLATFORM_CONTRACT}" != "success" ]; then
+    echo "contract: required GitHub platform lane did not pass" >&2
+    exit 1
+  fi
+elif [ "${PLATFORM_RESULT}" != "skipped" ] || [ -n "${PLATFORM_CONTRACT}" ]; then
+  echo "contract: unexpected GitHub platform lane execution" >&2
+  exit 1
+fi
 echo "contract=success" >> "${GITHUB_OUTPUT}"
 echo "contract: lane '${LANE}' passed""#;

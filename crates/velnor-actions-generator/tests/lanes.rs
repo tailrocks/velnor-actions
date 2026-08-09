@@ -123,7 +123,7 @@ fn same_gate_semantics_on_both_lanes_for_portable_gates() {
     // The install/build/test/lint/format gate commands appear on both lanes.
     for cmd in [
         "mise install --locked",
-        "mise run build",
+        "mise run ci",
         "mise run test",
         "mise run lint",
         "mise run fmt",
@@ -134,4 +134,107 @@ fn same_gate_semantics_on_both_lanes_for_portable_gates() {
             "{cmd} on both lanes"
         );
     }
+}
+
+#[test]
+fn optional_operation_interface_is_complete_and_non_selector() {
+    let template = render::consumer_template(RepositoryClass::Code);
+    for input in [
+        "recovery_proof_id",
+        "benchmark_campaign",
+        "benchmark_generation",
+        "benchmark_cache_id",
+        "benchmark_cache_mode",
+        "benchmark_fanout",
+        "benchmark_wave",
+        "benchmark_reservation",
+        "cache_proof_id",
+        "cache_generation",
+        "cache_temperature",
+    ] {
+        assert!(template.contains(&format!("{input}:")), "missing {input}");
+    }
+    assert_eq!(
+        template.matches("\n      lane:").count(),
+        4,
+        "one root input plus three forwarded lane values"
+    );
+    assert!(template.contains("cancel-in-progress: ${{ inputs.benchmark_campaign == '' }}"));
+}
+
+#[test]
+fn tap_platform_gate_is_required_on_macos_independent_of_lane() {
+    let workflow = callable(RepositoryClass::Tap);
+    assert!(workflow.contains("platform-lane:"));
+    assert!(workflow.contains("runs-on: macos-latest"));
+    assert!(workflow.contains("PLATFORM_REQUIRED: true"));
+    assert!(workflow.contains("- platform-lane"));
+    assert_eq!(workflow.matches("command: mise run test").count(), 1);
+}
+
+fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
+    let output = common::temp_dir("request-validator").join("github-output");
+    let mut command = std::process::Command::new("bash");
+    command.arg("-c").arg(render::VALIDATE_REQUEST_SCRIPT);
+    for key in [
+        "RECOVERY_PROOF_ID",
+        "BENCHMARK_CAMPAIGN",
+        "BENCHMARK_GENERATION",
+        "BENCHMARK_CACHE_ID",
+        "BENCHMARK_CACHE_MODE",
+        "BENCHMARK_FANOUT",
+        "BENCHMARK_WAVE",
+        "BENCHMARK_RESERVATION",
+        "CACHE_PROOF_ID",
+        "CACHE_GENERATION",
+        "CACHE_TEMPERATURE",
+    ] {
+        command.env(key, "");
+    }
+    for (key, value) in [
+        ("EVENT_NAME", "push"),
+        ("REF_TYPE", "branch"),
+        ("REF_PROTECTED", "false"),
+        ("HEAD_SHA", DUMMY_SHA),
+        ("WORKFLOW_SHA", DUMMY_SHA),
+        ("DECLARED_CACHE_IDS", "tools,dependencies,build-output"),
+    ] {
+        command.env(key, value);
+    }
+    for (key, value) in overrides {
+        command.env(key, value);
+    }
+    command.env("GITHUB_OUTPUT", output);
+    command.status().unwrap().success()
+}
+
+#[test]
+fn optional_operations_fail_closed_before_project_commands() {
+    assert!(run_request_validator(&[]));
+    assert!(!run_request_validator(&[("BENCHMARK_FANOUT", "8")]));
+    assert!(!run_request_validator(&[
+        ("BENCHMARK_CAMPAIGN", "campaign-0001"),
+        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_CACHE_ID", "unknown"),
+        ("BENCHMARK_CACHE_MODE", "enabled"),
+        ("BENCHMARK_FANOUT", "8"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+    ]));
+    assert!(run_request_validator(&[
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("BENCHMARK_CAMPAIGN", "campaign-0001"),
+        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_CACHE_ID", "tools"),
+        ("BENCHMARK_CACHE_MODE", "enabled"),
+        ("BENCHMARK_FANOUT", "8"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+    ]));
+    assert!(!run_request_validator(&[
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("RECOVERY_PROOF_ID", "recovery-deadbeef-operation"),
+    ]));
 }

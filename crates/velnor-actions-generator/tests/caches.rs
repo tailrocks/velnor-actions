@@ -351,13 +351,47 @@ fn generated_lanes_embed_identical_bounded_cache_contract() {
             declarations * 2,
             "each cache appears once per lane"
         );
+        let cache_keys = workflow
+            .lines()
+            .filter(|line| {
+                line.trim_start().starts_with("key: ci-v1/")
+                    || line.trim_start().starts_with("ci-v1/")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         for forbidden in [
             "github.sha",
             "github.run_id",
             "github.run_attempt",
             "github.ref_name",
         ] {
-            assert!(!workflow.contains(forbidden), "cache uses {forbidden}");
+            assert!(
+                !cache_keys.contains(forbidden),
+                "cache key uses {forbidden}"
+            );
         }
     }
+}
+
+#[test]
+fn both_mode_has_one_cache_publisher_and_validated_nonempty_digests() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    assert!(
+        workflow.contains("if: ${{ inputs.lane == 'both' }}\n        uses: actions/cache/restore@")
+    );
+    assert!(workflow.contains("if: ${{ inputs.lane != 'both' }}\n        uses: actions/cache@"));
+    assert!(workflow.contains("cache key digest missing or invalid"));
+    assert!(workflow.contains("^[0-9a-f]{64}$"));
+    assert_eq!(
+        workflow.matches("if: ${{ inputs.lane == 'both' }}").count(),
+        3,
+        "each Velnor cache becomes restore-only in both mode"
+    );
 }

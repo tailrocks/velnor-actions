@@ -349,10 +349,12 @@ fn validate_correctness_inputs(
         "**/yarn.lock",
         "mise.toml",
     ];
-    const BUILD_INPUTS: [&str; 4] = [
+    const BUILD_INPUTS: [&str; 6] = [
         "**/.cargo/config.toml",
         "**/Cargo.lock",
         "**/Cargo.toml",
+        "mise.lock",
+        "mise.toml",
         "rust-toolchain.toml",
     ];
     let required: &[&str] = match (class, id) {
