@@ -1034,8 +1034,11 @@ fn render_cache_proof_jobs(
     b.line(4, "name: sole cache publisher");
     b.line(4, "needs:");
     b.line(6, "- validate-request");
+    b.line(6, "- restore_barrier");
+    b.line(6, "- github_execute");
+    b.line(6, "- velnor_execute");
     b.line(6, "- proof_reconcile");
-    b.line(4, "if: ${{ always() && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
+    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 20");
     b.line(4, "steps:");
@@ -1221,7 +1224,7 @@ while IFS= read -r -d '' file; do
   fi
   printf '%s %s %s %s %s\n' "${{kind}}" "${{mode}}" "${{digest}}" "${{encoded}}" "${{target_encoded}}"
 done < "${{destination}}/files.nul" | LC_ALL=C sort > "${{destination}}/manifest.txt"
-tar --null --files-from="${{destination}}/files.nul" --no-recursion --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${{destination}}/cache.tar"
+tar --null --no-recursion --files-from="${{destination}}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${{destination}}/cache.tar"
 sha256sum "${{destination}}/manifest.txt" | cut -d' ' -f1 > "${{destination}}/manifest.sha256"
 sha256sum "${{destination}}/cache.tar" | cut -d' ' -f1 > "${{destination}}/archive.sha256"
 restore_started="${{RESTORE_STARTED_MS-0}}"; restore_finished="${{RESTORE_FINISHED_MS-0}}"

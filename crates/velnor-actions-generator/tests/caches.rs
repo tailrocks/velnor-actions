@@ -585,7 +585,7 @@ fn immutable_evidence_verifier_rejects_content_identity_and_set_tampering() {
         "printf 'other payload\\n' > source/cache/payload; (cd source && tar -cf ../evidence/cache.tar cache/payload); sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256"
     ));
     assert!(!run_evidence_verifier(
-        "sed -i 's/^640 /600 /' evidence/manifest.txt; sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256"
+        "sed -i.bak 's/^f 640 /f 600 /' evidence/manifest.txt; sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256"
     ));
     assert!(!run_evidence_verifier(
         "cp evidence/manifest.txt duplicate-line; cat duplicate-line >> evidence/manifest.txt; sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256"
@@ -618,7 +618,7 @@ for entry in cache/payload cache/link cache/empty; do
   printf '%s %s %s %s %s\n' "${{kind}}" "${{mode}}" "${{digest}}" "${{path}}" "${{target}}" >> ../evidence/manifest.txt
 done
 LC_ALL=C sort -o ../evidence/manifest.txt ../evidence/manifest.txt
-printf 'cache/payload\0cache/link\0cache/empty\0' | tar --null --files-from=- --no-recursion -cf ../evidence/cache.tar
+printf 'cache/payload\0cache/link\0cache/empty\0' | tar --null --no-recursion --files-from=- -cf ../evidence/cache.tar
 cd ..
 sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256
 sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
