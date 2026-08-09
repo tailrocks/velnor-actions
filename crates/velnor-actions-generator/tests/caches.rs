@@ -557,6 +557,7 @@ printf 'false\n' > evidence/hit
 printf 'tools\n' > evidence/cache-id
 printf 'github\n' > evidence/lane
 printf '12\n' > evidence/restore-ms
+printf '0\n' > evidence/lock-wait-ms
 size="$(stat -c '%s' evidence/cache.tar 2>/dev/null || stat -f '%z' evidence/cache.tar)"; printf '%s\n' "${{size}}" > evidence/cache-bytes
 printf '1\n' > evidence/cache-files
 printf 'miss\n' > evidence/hit-source
@@ -622,7 +623,7 @@ cd ..
 sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256
 sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
 printf 'false\ntools\ngithub\n12\n' > /dev/null
-printf 'false\n' > evidence/hit; printf 'tools\n' > evidence/cache-id; printf 'github\n' > evidence/lane; printf '12\n' > evidence/restore-ms
+printf 'false\n' > evidence/hit; printf 'tools\n' > evidence/cache-id; printf 'github\n' > evidence/lane; printf '12\n' > evidence/restore-ms; printf '0\n' > evidence/lock-wait-ms
 size="$(stat -c '%s' evidence/cache.tar 2>/dev/null || stat -f '%z' evidence/cache.tar)"; printf '%s\n' "${{size}}" > evidence/cache-bytes; printf '3\n' > evidence/cache-files; printf 'miss\n' > evidence/hit-source; printf '%s\n' -1 > evidence/age-seconds; printf 'unknown\n' > evidence/eviction-risk
 {verifier}
 verify_evidence evidence github tools
@@ -801,7 +802,7 @@ fn run_metrics_validator(json: &str, correlation: &str) -> bool {
 #[test]
 fn metrics_schema_enforces_units_boundaries_redaction_and_correlation() {
     let valid = format!(
-        r#"{{"schema":1,"lane":"github","slot":3,"required_step_start_ms":1000,"required_step_end_ms":1250,"required_steps_ms":250,"cpu_ms":120,"peak_memory_bytes":4096,"disk_bytes":8192,"cache_restore_ms":20,"cache_save_ms":0,"cache_copy_ms":4,"cache_lock_wait_ms":0,"disk_latency_ms":2,"psi":{{"cpu":"some avg10=0.00 total=1","io":"some avg10=0.00 total=2","memory":"some avg10=0.00 total=3"}},"cache_result":"exact","cache_bytes":1024,"cache_files":4,"output_digest":"{DIGEST_A}","correlation":"campaign-0001:wave-0001"}}"#
+        r#"{{"schema":1,"lane":"github","slot":3,"required_step_start_ms":1000,"required_step_end_ms":1250,"required_steps_ms":250,"cpu_ms":120,"peak_memory_bytes":4096,"disk_bytes":8192,"cache_restore_ms":20,"cache_save_ms":0,"cache_copy_ms":4,"cache_lock_wait_ms":0,"disk_latency_ms":2,"io_pressure_stall_ms":1,"psi":{{"cpu":"some avg10=0.00 total=1","io":"some avg10=0.00 total=2","memory":"some avg10=0.00 total=3"}},"cache_result":"exact","cache_bytes":1024,"cache_files":4,"output_digest":"{DIGEST_A}","correlation":"campaign-0001:wave-0001"}}"#
     );
     assert!(run_metrics_validator(&valid, "campaign-0001:wave-0001"));
     assert!(!run_metrics_validator(&valid, "other-correlation"));
@@ -821,4 +822,36 @@ fn metrics_schema_enforces_units_boundaries_redaction_and_correlation() {
         &valid.replace(&format!(",\"output_digest\":\"{DIGEST_A}\""), ""),
         "campaign-0001:wave-0001"
     ));
+}
+
+#[test]
+fn publisher_metrics_measure_the_only_save_boundary() {
+    let root = common::temp_dir("publisher-metrics");
+    let status = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::PUBLISHER_METRICS_SCRIPT)
+        .env("PUBLISH_STARTED_MS", "1000")
+        .env("PUBLISH_FINISHED_MS", "1123")
+        .env("PUBLISH_CACHE_ID", "tools")
+        .env("PUBLISH_CORRELATION", "campaign-0001:wave-0001")
+        .current_dir(&root)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let metrics =
+        std::fs::read_to_string(root.join(".velnor-proof/publisher-metrics/tools.json")).unwrap();
+    assert!(metrics.contains(r#""cache_save_ms": 123"#));
+    assert!(metrics.contains(r#""cache_lock_wait_ms": 0"#));
+
+    let invalid = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::PUBLISHER_METRICS_SCRIPT)
+        .env("PUBLISH_STARTED_MS", "1123")
+        .env("PUBLISH_FINISHED_MS", "1000")
+        .env("PUBLISH_CACHE_ID", "tools")
+        .env("PUBLISH_CORRELATION", "campaign-0001:wave-0001")
+        .current_dir(root)
+        .status()
+        .unwrap();
+    assert!(!invalid.success());
 }

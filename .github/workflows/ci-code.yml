@@ -239,6 +239,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -249,6 +251,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate tools Velnor cache authority
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
@@ -294,6 +297,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -304,6 +309,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate dependencies Velnor cache authority
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
@@ -349,6 +355,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -359,6 +367,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate build-output Velnor cache authority
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
@@ -776,6 +785,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-tools.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: 0
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -822,6 +832,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -876,6 +888,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-dependencies.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-dependencies.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: 0
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -922,6 +935,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -974,6 +989,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-build-output.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-build-output.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: 0
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -1020,6 +1036,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -1079,6 +1097,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -1089,6 +1109,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate tools proof authority
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1146,6 +1167,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-tools.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: ${{ steps.proof-authority-tools.outputs.lock_wait_ms }}
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -1192,6 +1214,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -1232,6 +1256,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -1242,6 +1268,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate dependencies proof authority
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1301,6 +1328,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-dependencies.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-dependencies.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: ${{ steps.proof-authority-dependencies.outputs.lock_wait_ms }}
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -1347,6 +1375,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -1387,6 +1417,8 @@ jobs:
           attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
           cleanup_state="$(read_field CLEANUP_STATE)"
           materialization_id="$(read_field MATERIALIZATION_ID)"
+          lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+          [[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
           {
             printf 'declaration_sha256=%s\n' "${declaration_sha256}"
             printf 'cache_id=%s\n' "${cache_id}"
@@ -1397,6 +1429,7 @@ jobs:
             printf 'attributed_bytes=%s\n' "${attributed_bytes}"
             printf 'cleanup_state=%s\n' "${cleanup_state}"
             printf 'materialization_id=%s\n' "${materialization_id}"
+            printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate build-output proof authority
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1454,6 +1487,7 @@ jobs:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
           RESTORE_STARTED_MS: ${{ steps.restore-start-build-output.outputs.monotonic_ms }}
           RESTORE_FINISHED_MS: ${{ steps.restore-timing-build-output.outputs.restore_finished_ms }}
+          CACHE_LOCK_WAIT_MS: ${{ steps.proof-authority-build-output.outputs.lock_wait_ms }}
         run: |
           set -euo pipefail
           safe_link_target() {
@@ -1500,6 +1534,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -1592,12 +1628,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -1795,12 +1832,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -1874,12 +1912,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -1953,12 +1992,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -2070,17 +2110,19 @@ jobs:
           (( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
           required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
           cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
-          disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+          io_pressure_stall_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
           cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
           : > .velnor-proof/runtime/hit-sources
           mapfile -d '' -t evidence < <(find ".velnor-proof/execute/${PROOF_LANE}" -mindepth 1 -maxdepth 1 -type d -print0)
           (( ${#evidence[@]} > 0 ))
           for root in "${evidence[@]}"; do
-            for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+            for field in restore-ms copy-ms lock-wait-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
             restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+            lock_wait="$(cat "${root}/lock-wait-ms")"
             bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
-            for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+            for value in "${restore}" "${copy}" "${lock_wait}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
             cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+            cache_lock_wait_ms=$((cache_lock_wait_ms + lock_wait))
             cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
             cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
           done
@@ -2094,6 +2136,12 @@ jobs:
             printf '%s %s\n' "${digest}" "${encoded}"
           done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
           output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
+          disk_probe_started_ms="$(date +%s%3N)"
+          sync .velnor-proof/runtime/output-manifest
+          disk_probe_finished_ms="$(date +%s%3N)"
+          for value in "${disk_probe_started_ms}" "${disk_probe_finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( disk_probe_finished_ms >= disk_probe_started_ms ))
+          disk_latency_ms=$((disk_probe_finished_ms - disk_probe_started_ms))
           correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
           [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
           psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
@@ -2104,10 +2152,11 @@ jobs:
             --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
             --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
             --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+            --argjson io_pressure_stall_ms "${io_pressure_stall_ms}" \
             --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
             --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
             --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
-            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
+            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,io_pressure_stall_ms:$io_pressure_stall_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
           export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
           export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
@@ -2115,12 +2164,12 @@ jobs:
           set -euo pipefail
           [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
           jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
-            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","io_pressure_stall_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
             .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
             (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
             (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
             (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
-            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.io_pressure_stall_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
             .required_step_end_ms >= .required_step_start_ms and
             .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
             ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
@@ -2176,6 +2225,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2235,6 +2286,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2294,6 +2347,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2383,12 +2438,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -2462,12 +2518,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -2541,12 +2598,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -2658,17 +2716,19 @@ jobs:
           (( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
           required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
           cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
-          disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+          io_pressure_stall_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
           cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
           : > .velnor-proof/runtime/hit-sources
           mapfile -d '' -t evidence < <(find ".velnor-proof/execute/${PROOF_LANE}" -mindepth 1 -maxdepth 1 -type d -print0)
           (( ${#evidence[@]} > 0 ))
           for root in "${evidence[@]}"; do
-            for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+            for field in restore-ms copy-ms lock-wait-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
             restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+            lock_wait="$(cat "${root}/lock-wait-ms")"
             bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
-            for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+            for value in "${restore}" "${copy}" "${lock_wait}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
             cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+            cache_lock_wait_ms=$((cache_lock_wait_ms + lock_wait))
             cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
             cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
           done
@@ -2682,6 +2742,12 @@ jobs:
             printf '%s %s\n' "${digest}" "${encoded}"
           done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
           output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
+          disk_probe_started_ms="$(date +%s%3N)"
+          sync .velnor-proof/runtime/output-manifest
+          disk_probe_finished_ms="$(date +%s%3N)"
+          for value in "${disk_probe_started_ms}" "${disk_probe_finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( disk_probe_finished_ms >= disk_probe_started_ms ))
+          disk_latency_ms=$((disk_probe_finished_ms - disk_probe_started_ms))
           correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
           [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
           psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
@@ -2692,10 +2758,11 @@ jobs:
             --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
             --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
             --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+            --argjson io_pressure_stall_ms "${io_pressure_stall_ms}" \
             --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
             --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
             --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
-            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
+            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,io_pressure_stall_ms:$io_pressure_stall_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
           export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
           export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
@@ -2703,12 +2770,12 @@ jobs:
           set -euo pipefail
           [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
           jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
-            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","io_pressure_stall_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
             .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
             (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
             (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
             (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
-            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.io_pressure_stall_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
             .required_step_end_ms >= .required_step_start_ms and
             .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
             ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
@@ -2764,6 +2831,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2823,6 +2892,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2882,6 +2953,8 @@ jobs:
           for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
           (( restore_finished >= restore_started ))
           printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
           stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
           wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
           if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
@@ -2966,12 +3039,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -3123,12 +3197,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -3178,7 +3253,14 @@ jobs:
           root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/tools'
           verify_evidence "${root}" github 'tools'
           tar -xf "${root}/cache.tar" -C .
+      - name: Start measured tools publisher boundary
+        id: publisher-clock-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        shell: bash
+        run: |
+          printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish tools exactly once
+        id: publish-tools
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -3186,6 +3268,32 @@ jobs:
             .cache/mise
             .local/share/mise/installs
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+      - name: Record measured tools publisher metrics
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        shell: bash
+        env:
+          PUBLISH_CACHE_ID: tools
+          PUBLISH_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
+          PUBLISH_STARTED_MS: ${{ steps.publisher-clock-tools.outputs.started_ms }}
+        run: |
+          set -euo pipefail
+          finished_ms="${PUBLISH_FINISHED_MS-}"
+          [[ -n "${finished_ms}" ]] || finished_ms="$(date +%s%3N)"
+          for value in "${PUBLISH_STARTED_MS}" "${finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( finished_ms >= PUBLISH_STARTED_MS ))
+          [[ "${PUBLISH_CACHE_ID}" =~ ^[a-z0-9][a-z0-9-]{1,63}$ ]]
+          correlation="$(printf '%s' "${PUBLISH_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
+          [[ -n "${correlation}" && "${correlation}" == "${PUBLISH_CORRELATION}" ]]
+          mkdir -p .velnor-proof/publisher-metrics
+          jq -n --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" \
+            --argjson save_ms "$((finished_ms - PUBLISH_STARTED_MS))" \
+            '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,correlation:$correlation}' \
+            > ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json"
+          jq -e --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" '
+            keys == ["cache_id","cache_lock_wait_ms","cache_save_ms","correlation","schema"] and
+            .schema == 1 and .cache_id == $cache_id and .correlation == $correlation and
+            ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
+          ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
       - name: Materialize deterministic dependencies post-state
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
         shell: bash
@@ -3200,12 +3308,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -3255,7 +3364,14 @@ jobs:
           root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/dependencies'
           verify_evidence "${root}" github 'dependencies'
           tar -xf "${root}/cache.tar" -C .
+      - name: Start measured dependencies publisher boundary
+        id: publisher-clock-dependencies
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        shell: bash
+        run: |
+          printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish dependencies exactly once
+        id: publish-dependencies
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -3265,6 +3381,32 @@ jobs:
             .gradle/caches
             **/node_modules
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+      - name: Record measured dependencies publisher metrics
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        shell: bash
+        env:
+          PUBLISH_CACHE_ID: dependencies
+          PUBLISH_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
+          PUBLISH_STARTED_MS: ${{ steps.publisher-clock-dependencies.outputs.started_ms }}
+        run: |
+          set -euo pipefail
+          finished_ms="${PUBLISH_FINISHED_MS-}"
+          [[ -n "${finished_ms}" ]] || finished_ms="$(date +%s%3N)"
+          for value in "${PUBLISH_STARTED_MS}" "${finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( finished_ms >= PUBLISH_STARTED_MS ))
+          [[ "${PUBLISH_CACHE_ID}" =~ ^[a-z0-9][a-z0-9-]{1,63}$ ]]
+          correlation="$(printf '%s' "${PUBLISH_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
+          [[ -n "${correlation}" && "${correlation}" == "${PUBLISH_CORRELATION}" ]]
+          mkdir -p .velnor-proof/publisher-metrics
+          jq -n --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" \
+            --argjson save_ms "$((finished_ms - PUBLISH_STARTED_MS))" \
+            '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,correlation:$correlation}' \
+            > ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json"
+          jq -e --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" '
+            keys == ["cache_id","cache_lock_wait_ms","cache_save_ms","correlation","schema"] and
+            .schema == 1 and .cache_id == $cache_id and .correlation == $correlation and
+            ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
+          ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
       - name: Materialize deterministic build-output post-state
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
         shell: bash
@@ -3279,12 +3421,13 @@ jobs:
           }
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
             [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
             [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -3334,7 +3477,14 @@ jobs:
           root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/build-output'
           verify_evidence "${root}" github 'build-output'
           tar -xf "${root}/cache.tar" -C .
+      - name: Start measured build-output publisher boundary
+        id: publisher-clock-build-output
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        shell: bash
+        run: |
+          printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish build-output exactly once
+        id: publish-build-output
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -3342,6 +3492,39 @@ jobs:
             target
             **/target
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      - name: Record measured build-output publisher metrics
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        shell: bash
+        env:
+          PUBLISH_CACHE_ID: build-output
+          PUBLISH_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
+          PUBLISH_STARTED_MS: ${{ steps.publisher-clock-build-output.outputs.started_ms }}
+        run: |
+          set -euo pipefail
+          finished_ms="${PUBLISH_FINISHED_MS-}"
+          [[ -n "${finished_ms}" ]] || finished_ms="$(date +%s%3N)"
+          for value in "${PUBLISH_STARTED_MS}" "${finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( finished_ms >= PUBLISH_STARTED_MS ))
+          [[ "${PUBLISH_CACHE_ID}" =~ ^[a-z0-9][a-z0-9-]{1,63}$ ]]
+          correlation="$(printf '%s' "${PUBLISH_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
+          [[ -n "${correlation}" && "${correlation}" == "${PUBLISH_CORRELATION}" ]]
+          mkdir -p .velnor-proof/publisher-metrics
+          jq -n --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" \
+            --argjson save_ms "$((finished_ms - PUBLISH_STARTED_MS))" \
+            '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,correlation:$correlation}' \
+            > ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json"
+          jq -e --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" '
+            keys == ["cache_id","cache_lock_wait_ms","cache_save_ms","correlation","schema"] and
+            .schema == 1 and .cache_id == $cache_id and .correlation == $correlation and
+            ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
+          ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
+      - name: Upload measured publisher metrics
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proof-publisher-metrics-${{ github.run_id }}
+          path: .velnor-proof/publisher-metrics
+          if-no-files-found: error
+          compression-level: 0
 
   cache-proof-contract:
     name: cache proof contract

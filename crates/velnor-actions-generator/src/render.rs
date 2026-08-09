@@ -729,6 +729,14 @@ fn render_cache_proof_jobs(
                 10,
                 &format!("RESTORE_FINISHED_MS: ${{{{ steps.restore-timing-{id}.outputs.restore_finished_ms }}}}"),
             );
+            if lane == "velnor" {
+                b.line(
+                    10,
+                    &format!("CACHE_LOCK_WAIT_MS: ${{{{ steps.proof-authority-{id}.outputs.lock_wait_ms }}}}"),
+                );
+            } else {
+                b.line(10, "CACHE_LOCK_WAIT_MS: 0");
+            }
             b.run_block(8, &package_cache_script(cache, lane, "restore"));
             b.line(6, &format!("- name: Upload {id} restore evidence"));
             b.line(8, &format!("id: upload-{id}"));
@@ -1057,14 +1065,55 @@ fn render_cache_proof_jobs(
         b.line(8, &format!("if: {selected}"));
         b.line(8, "shell: bash");
         b.run_block(8, &publish_materialize_script(id));
+        b.line(
+            6,
+            &format!("- name: Start measured {id} publisher boundary"),
+        );
+        b.line(8, &format!("id: publisher-clock-{id}"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.run_block(
+            8,
+            "printf 'started_ms=%s\\n' \"$(date +%s%3N)\" >> \"${GITHUB_OUTPUT}\"",
+        );
         b.line(6, &format!("- name: Publish {id} exactly once"));
+        b.line(8, &format!("id: publish-{id}"));
         b.line(8, &format!("if: {selected}"));
         b.line(
             8,
             &format!("uses: actions/cache/save@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
         );
         cache_action_with(b, contract.class, cache, false);
+        b.line(
+            6,
+            &format!("- name: Record measured {id} publisher metrics"),
+        );
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.line(8, "env:");
+        b.line(10, &format!("PUBLISH_CACHE_ID: {id}"));
+        b.line(
+            10,
+            "PUBLISH_CORRELATION: ${{ needs.validate-request.outputs.correlation }}",
+        );
+        b.line(
+            10,
+            &format!(
+                "PUBLISH_STARTED_MS: ${{{{ steps.publisher-clock-{id}.outputs.started_ms }}}}"
+            ),
+        );
+        b.run_block(8, PUBLISHER_METRICS_SCRIPT);
     }
+    b.line(6, "- name: Upload measured publisher metrics");
+    b.line(
+        8,
+        &format!("uses: actions/upload-artifact@{UPLOAD_ARTIFACT_REF} # {UPLOAD_ARTIFACT_VERSION}"),
+    );
+    b.line(8, "with:");
+    b.line(10, "name: proof-publisher-metrics-${{ github.run_id }}");
+    b.line(10, "path: .velnor-proof/publisher-metrics");
+    b.line(10, "if-no-files-found: error");
+    b.line(10, "compression-level: 0");
     b.blank();
 
     b.line(2, "cache-proof-contract:");
@@ -1172,6 +1221,8 @@ restore_started="${{RESTORE_STARTED_MS-0}}"; restore_finished="${{RESTORE_FINISH
 for value in "${{restore_started}}" "${{restore_finished}}"; do [[ "${{value}}" =~ ^[0-9]+$ ]]; done
 (( restore_finished >= restore_started ))
 printf '%s\n' "$((restore_finished - restore_started))" > "${{destination}}/restore-ms"
+[[ "${{CACHE_LOCK_WAIT_MS}}" =~ ^[0-9]+$ ]]
+printf '%s\n' "${{CACHE_LOCK_WAIT_MS}}" > "${{destination}}/lock-wait-ms"
 stat -c '%s' -- "${{destination}}/cache.tar" > "${{destination}}/cache-bytes"
 wc -l < "${{destination}}/manifest.txt" | tr -d ' ' > "${{destination}}/cache-files"
 if [[ "${{CACHE_HIT}}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${{destination}}/hit-source"
@@ -1249,12 +1300,13 @@ pub const EVIDENCE_VERIFIER: &str = r#"safe_link_target() {
 }
 verify_evidence() {
   local root="$1" expected_lane="$2" expected_id="$3" required
-  for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
+  for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms lock-wait-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
     [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
   done
   [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
   [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
   [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+  [[ "$(cat "${root}/lock-wait-ms")" =~ ^[0-9]+$ ]]
   [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
   [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
   [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
@@ -1339,6 +1391,29 @@ printf 'START_MONOTONIC_MS=%s\nSTART_CPU_USEC=%s\nSTART_IO_TOTAL_USEC=%s\n' \
   "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}" > .velnor-proof/runtime/start.env
 "#;
 
+/// Truthful sole-publisher cache-save timing. Execute jobs report zero save
+/// time because they never publish; this separate correlated record owns the
+/// only actual save boundary.
+pub const PUBLISHER_METRICS_SCRIPT: &str = r#"set -euo pipefail
+finished_ms="${PUBLISH_FINISHED_MS-}"
+[[ -n "${finished_ms}" ]] || finished_ms="$(date +%s%3N)"
+for value in "${PUBLISH_STARTED_MS}" "${finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+(( finished_ms >= PUBLISH_STARTED_MS ))
+[[ "${PUBLISH_CACHE_ID}" =~ ^[a-z0-9][a-z0-9-]{1,63}$ ]]
+correlation="$(printf '%s' "${PUBLISH_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
+[[ -n "${correlation}" && "${correlation}" == "${PUBLISH_CORRELATION}" ]]
+mkdir -p .velnor-proof/publisher-metrics
+jq -n --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" \
+  --argjson save_ms "$((finished_ms - PUBLISH_STARTED_MS))" \
+  '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,correlation:$correlation}' \
+  > ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json"
+jq -e --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" '
+  keys == ["cache_id","cache_lock_wait_ms","cache_save_ms","correlation","schema"] and
+  .schema == 1 and .cache_id == $cache_id and .correlation == $correlation and
+  ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
+' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
+"#;
+
 const METRICS_SCRIPT: &str = r#"set -euo pipefail
 source .velnor-proof/runtime/start.env
 for value in "${START_MONOTONIC_MS}" "${START_CPU_USEC}" "${START_IO_TOTAL_USEC}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
@@ -1351,17 +1426,19 @@ for value in "${end_monotonic_ms}" "${end_cpu_usec}" "${end_io_total_usec}" "${p
 (( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
 required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
 cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
-disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+io_pressure_stall_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
 cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
 : > .velnor-proof/runtime/hit-sources
 mapfile -d '' -t evidence < <(find ".velnor-proof/execute/${PROOF_LANE}" -mindepth 1 -maxdepth 1 -type d -print0)
 (( ${#evidence[@]} > 0 ))
 for root in "${evidence[@]}"; do
-  for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+  for field in restore-ms copy-ms lock-wait-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
   restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+  lock_wait="$(cat "${root}/lock-wait-ms")"
   bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
-  for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+  for value in "${restore}" "${copy}" "${lock_wait}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
   cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+  cache_lock_wait_ms=$((cache_lock_wait_ms + lock_wait))
   cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
   cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
 done
@@ -1375,6 +1452,12 @@ while IFS= read -r -d '' file; do
   printf '%s %s\n' "${digest}" "${encoded}"
 done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
 output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
+disk_probe_started_ms="$(date +%s%3N)"
+sync .velnor-proof/runtime/output-manifest
+disk_probe_finished_ms="$(date +%s%3N)"
+for value in "${disk_probe_started_ms}" "${disk_probe_finished_ms}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+(( disk_probe_finished_ms >= disk_probe_started_ms ))
+disk_latency_ms=$((disk_probe_finished_ms - disk_probe_started_ms))
 correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
 [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
 psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
@@ -1385,10 +1468,11 @@ jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
   --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
   --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
   --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+  --argjson io_pressure_stall_ms "${io_pressure_stall_ms}" \
   --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
   --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
   --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
-  '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
+  '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,io_pressure_stall_ms:$io_pressure_stall_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
   > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
 export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
 export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
@@ -1398,12 +1482,12 @@ export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT
 pub const METRICS_VALIDATE_SCRIPT: &str = r#"set -euo pipefail
 [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
 jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
-  keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+  keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","io_pressure_stall_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
   .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
   (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
   (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
   (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
-  ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+  ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.io_pressure_stall_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
   .required_step_end_ms >= .required_step_start_ms and
   .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
   ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
@@ -1896,6 +1980,8 @@ reserved_bytes="$(read_field RESERVED_BYTES)"
 attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
 cleanup_state="$(read_field CLEANUP_STATE)"
 materialization_id="$(read_field MATERIALIZATION_ID)"
+lock_wait_ms="$(read_field LOCK_WAIT_MS)"
+[[ "${lock_wait_ms}" =~ ^[0-9]+$ ]] || { echo 'invalid Velnor cache lock wait' >&2; exit 1; }
 {
   printf 'declaration_sha256=%s\n' "${declaration_sha256}"
   printf 'cache_id=%s\n' "${cache_id}"
@@ -1906,6 +1992,7 @@ materialization_id="$(read_field MATERIALIZATION_ID)"
   printf 'attributed_bytes=%s\n' "${attributed_bytes}"
   printf 'cleanup_state=%s\n' "${cleanup_state}"
   printf 'materialization_id=%s\n' "${materialization_id}"
+  printf 'lock_wait_ms=%s\n' "${lock_wait_ms}"
 } >> "${GITHUB_OUTPUT}"
 "#;
 
