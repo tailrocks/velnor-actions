@@ -453,6 +453,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      tools_artifact_id: ${{ steps.upload-tools.outputs.artifact-id }}
+      tools_artifact_digest: ${{ steps.upload-tools.outputs.artifact-digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -525,6 +528,7 @@ jobs:
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Upload tools restore evidence
+        id: upload-tools
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -541,6 +545,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      tools_artifact_id: ${{ steps.upload-tools.outputs.artifact-id }}
+      tools_artifact_digest: ${{ steps.upload-tools.outputs.artifact-digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -668,6 +675,7 @@ jobs:
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Upload tools restore evidence
+        id: upload-tools
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -689,13 +697,13 @@ jobs:
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: proof-restore-github-tools-${{ github.run_id }}
+          artifact-ids: ${{ needs.github_restore.outputs.tools_artifact_id }}
           path: .velnor-proof/barrier/github/tools
       - name: Download velnor tools restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: proof-restore-velnor-tools-${{ github.run_id }}
+          artifact-ids: ${{ needs.velnor_restore.outputs.tools_artifact_id }}
           path: .velnor-proof/barrier/velnor/tools
       - name: Verify paired restore evidence and temperature
         shell: bash
@@ -703,6 +711,10 @@ jobs:
           CACHE_TEMPERATURE: ${{ inputs.cache_temperature }}
           CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}
           BENCHMARK_CACHE_ID: ${{ inputs.benchmark_cache_id }}
+          TOOLS_github_ARTIFACT_ID: ${{ needs.github_restore.outputs.tools_artifact_id }}
+          TOOLS_github_ARTIFACT_DIGEST: ${{ needs.github_restore.outputs.tools_artifact_digest }}
+          TOOLS_velnor_ARTIFACT_ID: ${{ needs.velnor_restore.outputs.tools_artifact_id }}
+          TOOLS_velnor_ARTIFACT_DIGEST: ${{ needs.velnor_restore.outputs.tools_artifact_digest }}
         run: |
           set -euo pipefail
           verify_evidence() {
@@ -748,6 +760,9 @@ jobs:
           selected=0
           if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CACHE_ID}" ]]; then
             selected=$((selected + 1))
+            for identity in "${TOOLS_github_ARTIFACT_ID}" "${TOOLS_velnor_ARTIFACT_ID}"; do [[ "${identity}" =~ ^[1-9][0-9]*$ ]]; done
+            for digest in "${TOOLS_github_ARTIFACT_DIGEST}" "${TOOLS_velnor_ARTIFACT_DIGEST}"; do [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; done
+            [[ "${TOOLS_github_ARTIFACT_ID}" != "${TOOLS_velnor_ARTIFACT_ID}" ]]
             github='.velnor-proof/barrier/github/tools'
             velnor='.velnor-proof/barrier/velnor/tools'
             verify_evidence "${github}" github 'tools'
@@ -1043,6 +1058,7 @@ jobs:
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Upload execute post-state and metrics
+        id: upload-post
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-post-github-${{ github.run_id }}-${{ matrix.slot }}
@@ -1312,6 +1328,7 @@ jobs:
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Upload execute post-state and metrics
+        id: upload-post
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-post-velnor-${{ github.run_id }}-${{ matrix.slot }}
@@ -1336,10 +1353,36 @@ jobs:
     outputs:
       contract: ${{ steps.reconcile.outputs.contract }}
     steps:
+      - name: Resolve exact immutable post-state artifacts
+        id: post-identities
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}
+        run: |
+          set -euo pipefail
+          fail() { echo "post artifact identity: $*" >&2; exit 1; }
+          [[ "${RUN_ID}" =~ ^[1-9][0-9]*$ && "${FANOUT}" =~ ^(1|8)$ ]] || fail "invalid run or fanout"
+          pages="$(gh api --paginate --slurp "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts?per_page=100")"
+          artifacts="$(jq -c '[.[].artifacts[] | select(.name | startswith("proof-post-"))] | sort_by(.name)' <<<"${pages}")"
+          expected=$((FANOUT * 2))
+          [[ "$(jq 'length' <<<"${artifacts}")" == "${expected}" ]] || fail "missing or extra post artifact"
+          for ((slot=0; slot<FANOUT; slot++)); do
+            for lane in github velnor; do
+              name="proof-post-${lane}-${RUN_ID}-${slot}"
+              jq -e --arg name "${name}" '[.[] | select(.name == $name)] | length == 1' <<<"${artifacts}" >/dev/null || fail "missing or duplicate expected artifact"
+            done
+          done
+          jq -e 'all(.[]; (.id | type == "number" and . > 0 and floor == .) and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))) and ([.[].id] | length == (unique | length))' <<<"${artifacts}" >/dev/null || fail "invalid or duplicate immutable identity"
+          artifact_ids="$(jq -r '[.[].id | tostring] | join(",")' <<<"${artifacts}")"
+          [[ -n "${artifact_ids}" ]] || fail "empty artifact identity set"
+          printf 'artifact_ids=%s\ncontract=success\n' "${artifact_ids}" >> "${GITHUB_OUTPUT}"
       - name: Download every lane and slot post-state
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: proof-post-*-${{ github.run_id }}-*
+          artifact-ids: ${{ steps.post-identities.outputs.artifact_ids }}
           path: .velnor-proof/publish
           merge-multiple: false
       - name: Verify exact post-state set and lane equality

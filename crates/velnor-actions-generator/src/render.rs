@@ -587,6 +587,21 @@ fn render_cache_proof_jobs(
         b.line(4, "timeout-minutes: 30");
         b.line(4, "permissions:");
         b.line(6, "contents: read");
+        b.line(4, "outputs:");
+        for cache in &declarations {
+            let output = cache.id.replace('-', "_");
+            let id = cache.id.as_str();
+            b.line(
+                6,
+                &format!("{output}_artifact_id: ${{{{ steps.upload-{id}.outputs.artifact-id }}}}"),
+            );
+            b.line(
+                6,
+                &format!(
+                    "{output}_artifact_digest: ${{{{ steps.upload-{id}.outputs.artifact-digest }}}}"
+                ),
+            );
+        }
         b.line(4, "steps:");
         b.line(6, "- name: Check out repository");
         b.line(
@@ -716,6 +731,7 @@ fn render_cache_proof_jobs(
             );
             b.run_block(8, &package_cache_script(cache, lane, "restore"));
             b.line(6, &format!("- name: Upload {id} restore evidence"));
+            b.line(8, &format!("id: upload-{id}"));
             b.line(8, &format!("if: {selected}"));
             b.line(8, &format!("uses: actions/upload-artifact@{UPLOAD_ARTIFACT_REF} # {UPLOAD_ARTIFACT_VERSION}"));
             b.line(8, "with:");
@@ -752,7 +768,10 @@ fn render_cache_proof_jobs(
             b.line(8, "with:");
             b.line(
                 10,
-                &format!("name: proof-restore-{lane}-{id}-${{{{ github.run_id }}}}"),
+                &format!(
+                    "artifact-ids: ${{{{ needs.{lane}_restore.outputs.{}_artifact_id }}}}",
+                    id.replace('-', "_")
+                ),
             );
             b.line(10, &format!("path: .velnor-proof/barrier/{lane}/{id}"));
         }
@@ -763,6 +782,14 @@ fn render_cache_proof_jobs(
     b.line(10, "CACHE_TEMPERATURE: ${{ inputs.cache_temperature }}");
     b.line(10, "CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}");
     b.line(10, "BENCHMARK_CACHE_ID: ${{ inputs.benchmark_cache_id }}");
+    for cache in &declarations {
+        let output = cache.id.replace('-', "_");
+        let env = output.to_ascii_uppercase();
+        for lane in ["github", "velnor"] {
+            b.line(10, &format!("{env}_{lane}_ARTIFACT_ID: ${{{{ needs.{lane}_restore.outputs.{output}_artifact_id }}}}"));
+            b.line(10, &format!("{env}_{lane}_ARTIFACT_DIGEST: ${{{{ needs.{lane}_restore.outputs.{output}_artifact_digest }}}}"));
+        }
+    }
     b.run_block(8, &barrier_script(&declarations));
     b.blank();
 
@@ -911,6 +938,7 @@ fn render_cache_proof_jobs(
             b.run_block(8, &package_cache_script(cache, lane, "post"));
         }
         b.line(6, "- name: Upload execute post-state and metrics");
+        b.line(8, "id: upload-post");
         b.line(
             8,
             &format!(
@@ -945,6 +973,18 @@ fn render_cache_proof_jobs(
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.reconcile.outputs.contract }}");
     b.line(4, "steps:");
+    b.line(6, "- name: Resolve exact immutable post-state artifacts");
+    b.line(8, "id: post-identities");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    b.line(10, "GH_TOKEN: ${{ github.token }}");
+    b.line(10, "REPOSITORY: ${{ github.repository }}");
+    b.line(10, "RUN_ID: ${{ github.run_id }}");
+    b.line(
+        10,
+        "FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}",
+    );
+    b.run_block(8, POST_ARTIFACT_IDENTITY_SCRIPT);
     b.line(6, "- name: Download every lane and slot post-state");
     b.line(
         8,
@@ -953,7 +993,10 @@ fn render_cache_proof_jobs(
         ),
     );
     b.line(8, "with:");
-    b.line(10, "pattern: proof-post-*-${{ github.run_id }}-*");
+    b.line(
+        10,
+        "artifact-ids: ${{ steps.post-identities.outputs.artifact_ids }}",
+    );
     b.line(10, "path: .velnor-proof/publish");
     b.line(10, "merge-multiple: false");
     b.line(6, "- name: Verify exact post-state set and lane equality");
@@ -1164,8 +1207,9 @@ fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
     let mut script = format!("set -euo pipefail\n{EVIDENCE_VERIFIER}\nselected=0\n");
     for cache in declarations {
         let id = cache.id.as_str();
+        let env = id.replace('-', "_").to_ascii_uppercase();
         script.push_str(&format!(
-            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
         ));
     }
     script.push_str(
@@ -1388,6 +1432,27 @@ else
   [[ "${CACHE_PUBLISH}" == skipped ]] || { echo "warm/disabled proof publisher must skip" >&2; exit 1; }
 fi
 echo 'contract=success' >> "${GITHUB_OUTPUT}"
+"#;
+
+/// Resolves the exact immutable artifact IDs and service-computed digests for
+/// every expected lane/slot post-state before any download or reconciliation.
+pub const POST_ARTIFACT_IDENTITY_SCRIPT: &str = r#"set -euo pipefail
+fail() { echo "post artifact identity: $*" >&2; exit 1; }
+[[ "${RUN_ID}" =~ ^[1-9][0-9]*$ && "${FANOUT}" =~ ^(1|8)$ ]] || fail "invalid run or fanout"
+pages="$(gh api --paginate --slurp "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts?per_page=100")"
+artifacts="$(jq -c '[.[].artifacts[] | select(.name | startswith("proof-post-"))] | sort_by(.name)' <<<"${pages}")"
+expected=$((FANOUT * 2))
+[[ "$(jq 'length' <<<"${artifacts}")" == "${expected}" ]] || fail "missing or extra post artifact"
+for ((slot=0; slot<FANOUT; slot++)); do
+  for lane in github velnor; do
+    name="proof-post-${lane}-${RUN_ID}-${slot}"
+    jq -e --arg name "${name}" '[.[] | select(.name == $name)] | length == 1' <<<"${artifacts}" >/dev/null || fail "missing or duplicate expected artifact"
+  done
+done
+jq -e 'all(.[]; (.id | type == "number" and . > 0 and floor == .) and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))) and ([.[].id] | length == (unique | length))' <<<"${artifacts}" >/dev/null || fail "invalid or duplicate immutable identity"
+artifact_ids="$(jq -r '[.[].id | tostring] | join(",")' <<<"${artifacts}")"
+[[ -n "${artifact_ids}" ]] || fail "empty artifact identity set"
+printf 'artifact_ids=%s\ncontract=success\n' "${artifact_ids}" >> "${GITHUB_OUTPUT}"
 "#;
 
 fn lane_steps(

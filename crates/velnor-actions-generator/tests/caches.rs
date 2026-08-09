@@ -490,6 +490,56 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
     assert!(!run_proof_contract(&[("TEMPERATURE", "cold")]));
 }
 
+fn run_post_artifact_identity(artifacts: &str, fanout: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let root = common::temp_dir("post-artifact-identities");
+    let gh = root.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"${FAKE_ARTIFACTS}\"\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&gh, permissions).unwrap();
+    let output = root.join("output");
+    let path = format!("{}:{}", root.display(), std::env::var("PATH").unwrap());
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::POST_ARTIFACT_IDENTITY_SCRIPT)
+        .env("PATH", path)
+        .env("FAKE_ARTIFACTS", artifacts)
+        .env("REPOSITORY", "tailrocks/example")
+        .env("RUN_ID", "123")
+        .env("FANOUT", fanout)
+        .env("GITHUB_OUTPUT", output)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn post_artifact_identity_rejects_missing_duplicate_and_unbound_digest() {
+    let github =
+        format!(r#"{{"id":1,"name":"proof-post-github-123-0","digest":"sha256:{DIGEST_A}"}}"#);
+    let velnor =
+        format!(r#"{{"id":2,"name":"proof-post-velnor-123-0","digest":"sha256:{DIGEST_B}"}}"#);
+    let valid = format!(r#"[{{"artifacts":[{github},{velnor}]}}]"#);
+    assert!(run_post_artifact_identity(&valid, "1"));
+    assert!(!run_post_artifact_identity(
+        &format!(r#"[{{"artifacts":[{github}]}}]"#),
+        "1"
+    ));
+    assert!(!run_post_artifact_identity(
+        &format!(r#"[{{"artifacts":[{github},{github}]}}]"#),
+        "1"
+    ));
+    assert!(!run_post_artifact_identity(
+        &valid.replace(&format!("sha256:{DIGEST_B}"), "sha256:invalid"),
+        "1"
+    ));
+}
+
 fn run_evidence_verifier(tamper: &str) -> bool {
     let root = common::temp_dir("evidence-verifier");
     let script = format!(
