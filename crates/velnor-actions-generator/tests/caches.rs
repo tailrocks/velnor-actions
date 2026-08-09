@@ -395,3 +395,88 @@ fn both_mode_has_one_cache_publisher_and_validated_nonempty_digests() {
         "each Velnor cache becomes restore-only in both mode"
     );
 }
+
+#[test]
+fn generated_cache_proof_dag_is_evidence_bearing_and_single_writer() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    for job in [
+        "github_restore:",
+        "velnor_restore:",
+        "restore_barrier:",
+        "github_execute:",
+        "velnor_execute:",
+        "cache_publish:",
+        "cache-proof-contract:",
+    ] {
+        assert!(workflow.contains(job), "missing {job}");
+    }
+    assert!(workflow.contains("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"));
+    assert!(workflow.contains("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"));
+    assert!(workflow.contains("tar --sort=name --mtime='@0' --owner=0 --group=0"));
+    assert!(workflow.contains("sha256sum"));
+    assert!(workflow.contains("slot: ${{ fromJSON(inputs.benchmark_fanout == '8'"));
+    assert!(workflow.contains("cache_restore_ms"));
+    assert!(workflow.contains("cache_lock_wait_ms"));
+    assert!(workflow.contains("if ${publish_expected}; then"));
+}
+
+#[test]
+fn velnor_cache_access_requires_bound_runtime_authority() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    assert!(workflow.contains("Capture tools Velnor cache authority"));
+    assert!(workflow.contains("actions/cache-contract@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(workflow.contains("required-peak-bytes: 2147483648"));
+    assert!(workflow.contains("VELNOR_CACHE_${CACHE_ENV_PREFIX}_"));
+}
+
+fn run_proof_contract(overrides: &[(&str, &str)]) -> bool {
+    let output = common::temp_dir("proof-contract").join("github-output");
+    let mut command = std::process::Command::new("bash");
+    command
+        .arg("-c")
+        .arg(velnor_actions_generator::render::PROOF_CONTRACT_SCRIPT);
+    for key in [
+        "GITHUB_RESTORE",
+        "VELNOR_RESTORE",
+        "RESTORE_BARRIER",
+        "GITHUB_EXECUTE",
+        "VELNOR_EXECUTE",
+    ] {
+        command.env(key, "success");
+    }
+    command.env("CACHE_PUBLISH", "skipped");
+    command.env("TEMPERATURE", "warm");
+    command.env("BENCHMARK_MODE", "");
+    for (key, value) in overrides {
+        command.env(key, value);
+    }
+    command.env("GITHUB_OUTPUT", output);
+    command.status().unwrap().success()
+}
+
+#[test]
+fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
+    assert!(run_proof_contract(&[]));
+    assert!(!run_proof_contract(&[("RESTORE_BARRIER", "failure")]));
+    assert!(!run_proof_contract(&[("GITHUB_EXECUTE", "skipped")]));
+    assert!(!run_proof_contract(&[("CACHE_PUBLISH", "success")]));
+    assert!(run_proof_contract(&[
+        ("TEMPERATURE", "cold"),
+        ("CACHE_PUBLISH", "success"),
+    ]));
+    assert!(!run_proof_contract(&[("TEMPERATURE", "cold")]));
+}

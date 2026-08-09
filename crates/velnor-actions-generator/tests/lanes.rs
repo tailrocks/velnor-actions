@@ -130,8 +130,8 @@ fn same_gate_semantics_on_both_lanes_for_portable_gates() {
     ] {
         assert_eq!(
             wf.matches(&format!("command: {cmd}")).count(),
-            2,
-            "{cmd} on both lanes"
+            4,
+            "{cmd} on both ordinary and proof lanes"
         );
     }
 }

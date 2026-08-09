@@ -7,6 +7,7 @@
 # release SHA pin and CalVer version comment are identical across all three
 # calls and are replaced together at release time by render-consumer.
 name: CI
+run-name: ${{ inputs.recovery_proof_id != '' && format('CI recovery {0}', inputs.recovery_proof_id) || inputs.benchmark_campaign != '' && format('CI benchmark {0}/{1}', inputs.benchmark_campaign, inputs.benchmark_wave) || inputs.cache_proof_id != '' && format('CI cache proof {0}', inputs.cache_proof_id) || 'CI' }}
 
 on:
   pull_request:
@@ -76,6 +77,7 @@ on:
         default: ""
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:

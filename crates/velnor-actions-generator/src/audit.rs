@@ -17,6 +17,89 @@ use crate::render::{
 };
 use crate::{ALL_CLASSES, RepositoryClass};
 
+const ADMITTED_REMOTE_ROOTS: [(&str, &str); 5] = [
+    (
+        "actions/checkout",
+        "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    ),
+    (
+        "jdx/mise-action",
+        "7e36c90d9ab29c415a2384db3006f3ec8a8cc654",
+    ),
+    ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"),
+    (
+        "actions/upload-artifact",
+        "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    ),
+    (
+        "actions/download-artifact",
+        "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    ),
+];
+
+const REMOTE_EXECUTABLE_CLOSURE: [(&str, &str); 15] = [
+    (
+        "actions/checkout/action.yml",
+        "d59219cb79590abdb877deaa14e3b65a00c05318bf5a6f3b989b9162b5d08c35",
+    ),
+    (
+        "actions/checkout/dist/index.js",
+        "b604bf1c08a471aedf51ddddbd3e8d03041683db270692d66cd1b4b097457818",
+    ),
+    (
+        "jdx/mise-action/action.yml",
+        "d39d054a1402d4260af8343352cd54f4a44453276abfc2f9f47206e8beb00dec",
+    ),
+    (
+        "jdx/mise-action/dist/index.js",
+        "8ca04f766d0b1ff41c13c873728288252ade6c6f3d2783212587b0f95a7604b2",
+    ),
+    (
+        "actions/cache/action.yml",
+        "c04edf35104c16c8944076df01561748bac9cd10941417e467a236e508e52dda",
+    ),
+    (
+        "actions/cache/dist/restore/index.js",
+        "79a05f72974c12e3796bf09c897fce453a855f5f4a4abc980be6f671c545954d",
+    ),
+    (
+        "actions/cache/dist/save/index.js",
+        "9193aa9dbe5025f2bf39802ae241470af35c5e5737fd4bec6e1d6dbaad153bb4",
+    ),
+    (
+        "actions/cache/restore/action.yml",
+        "bb552a94cec165255080b7e13fe3d2051c6c79e321e99435b5859dc7de5e9057",
+    ),
+    (
+        "actions/cache/dist/restore-only/index.js",
+        "8522c6be9a4650a3b1571f7222293f262cc4c4708fbe061d8ed04654d476cf16",
+    ),
+    (
+        "actions/cache/save/action.yml",
+        "5da400e1a7551cee617339fd1a5281483d71e6c56d86dd117fbd354f047308ec",
+    ),
+    (
+        "actions/cache/dist/save-only/index.js",
+        "0d3cf341a79cdc0a8ce5a71103f46174e12cf4f98db46f15b8e604932eefd487",
+    ),
+    (
+        "actions/upload-artifact/action.yml",
+        "c5979822866a72362e609844b6ebe77d4b7e759af68cc1c2c425dcf51481fab4",
+    ),
+    (
+        "actions/upload-artifact/dist/upload/index.js",
+        "eea594941d8ee535974e0fbc03bbdf567f3abc78194f224b93f2df9a887ee2e9",
+    ),
+    (
+        "actions/download-artifact/action.yml",
+        "e98559b7a31ba31be4709f20d22102dc2737fa630f69a339eb89981151e505fe",
+    ),
+    (
+        "actions/download-artifact/dist/index.js",
+        "f4a6b7046eb834bed98bb687f6d08feb0bfe6fb32570e9da7de0707884c08b31",
+    ),
+];
+
 /// A deterministic disposable release identity used only to exercise
 /// materialization during the audit (never written anywhere).
 const AUDIT_RELEASE_SHA: &str = "0000000000000000000000000000000000000000";
@@ -179,6 +262,21 @@ fn uses_refs(text: &str) -> Vec<String> {
     refs
 }
 
+fn uses_identities(text: &str) -> Vec<String> {
+    let mut identities = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start().trim_start_matches("- ").trim_start();
+        let Some(rest) = trimmed.strip_prefix("uses:") else {
+            continue;
+        };
+        let value = rest.split_whitespace().next().unwrap_or_default();
+        if !value.starts_with("./") && !value.starts_with('.') {
+            identities.push(value.to_string());
+        }
+    }
+    identities
+}
+
 fn audit_consumer_structure(class: RepositoryClass, rendered: &str) -> Result<(), String> {
     let what = template_path_display(class);
     let file = render::callable_file_name(class);
@@ -286,6 +384,7 @@ fn audit_callable_structure(
             return Err(format!("{what}: non-40-hex or mutable ref {reference:?}"));
         }
     }
+    audit_admitted_closure(rendered, block_sha, &what)?;
 
     // Public unmerged-code events route the Velnor lane to GitHub-hosted; no
     // public-unmerged Velnor route is allowed.
@@ -312,6 +411,58 @@ fn audit_callable_structure(
             && cmd.trim().is_empty()
         {
             return Err(format!("{what}: rendered gate has an empty command"));
+        }
+    }
+    Ok(())
+}
+
+fn audit_admitted_closure(rendered: &str, block_sha: &str, what: &str) -> Result<(), String> {
+    for identity in uses_identities(rendered) {
+        let (target, reference) = identity
+            .rsplit_once('@')
+            .ok_or_else(|| format!("{what}: action identity has no ref {identity:?}"))?;
+        let mut segments = target.split('/');
+        let owner = segments.next().unwrap_or_default();
+        let repository = segments.next().unwrap_or_default();
+        let root = format!("{owner}/{repository}");
+        if root == format!("{CANONICAL_OWNER}/{ACTIONS_REPO}") {
+            if reference != block_sha {
+                return Err(format!(
+                    "{what}: internal action is not block-bound: {identity}"
+                ));
+            }
+            continue;
+        }
+        if !ADMITTED_REMOTE_ROOTS
+            .iter()
+            .any(|(admitted, sha)| *admitted == root && *sha == reference)
+        {
+            return Err(format!("{what}: unadmitted remote action {identity}"));
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for (path, digest) in REMOTE_EXECUTABLE_CLOSURE {
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(format!(
+                "{what}: malformed executable closure digest for {path}"
+            ));
+        }
+        if !seen.insert(path) {
+            return Err(format!("{what}: duplicate executable closure path {path}"));
+        }
+    }
+    for (root, _) in ADMITTED_REMOTE_ROOTS {
+        if !REMOTE_EXECUTABLE_CLOSURE
+            .iter()
+            .any(|(path, _)| path.starts_with(&format!("{root}/")))
+        {
+            return Err(format!(
+                "{what}: admitted root {root} has no executable closure"
+            ));
         }
     }
     Ok(())

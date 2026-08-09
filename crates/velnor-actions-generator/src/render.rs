@@ -33,6 +33,10 @@ const MISE_ACTION_VERSION: &str = "v4.2.4";
 /// Pinned GitHub cache action.
 const CACHE_ACTION_REF: &str = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const CACHE_ACTION_VERSION: &str = "v6.1.0";
+const UPLOAD_ARTIFACT_REF: &str = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
+const UPLOAD_ARTIFACT_VERSION: &str = "v7.0.1";
+const DOWNLOAD_ARTIFACT_REF: &str = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const DOWNLOAD_ARTIFACT_VERSION: &str = "v8.0.1";
 
 /// The generated workflow file name for a class: `ci-<class>.yml`.
 #[must_use]
@@ -118,6 +122,7 @@ pub fn consumer_template(class: RepositoryClass) -> String {
         "# calls and are replaced together at release time by render-consumer.",
     );
     b.line(0, "name: CI");
+    b.line(0, "run-name: ${{ inputs.recovery_proof_id != '' && format('CI recovery {0}', inputs.recovery_proof_id) || inputs.benchmark_campaign != '' && format('CI benchmark {0}/{1}', inputs.benchmark_campaign, inputs.benchmark_wave) || inputs.cache_proof_id != '' && format('CI cache proof {0}', inputs.cache_proof_id) || 'CI' }}");
     b.blank();
     b.line(0, "on:");
     b.line(2, "pull_request:");
@@ -133,6 +138,7 @@ pub fn consumer_template(class: RepositoryClass) -> String {
     consumer_auxiliary_inputs(&mut b);
     b.blank();
     b.line(0, "permissions:");
+    b.line(2, "actions: read");
     b.line(2, "contents: read");
     b.blank();
     b.line(0, "concurrency:");
@@ -277,8 +283,15 @@ pub fn callable_workflow(
         "description: \"'success' only when every selected lane passed its applicable gates.\"",
     );
     b.line(8, "value: ${{ jobs.contract.outputs.contract }}");
+    b.line(6, "correlation:");
+    b.line(
+        8,
+        "description: \"Authenticated recovery, benchmark, or cache-proof correlation.\"",
+    );
+    b.line(8, "value: ${{ jobs.validate-request.outputs.correlation }}");
     b.blank();
     b.line(0, "permissions:");
+    b.line(2, "actions: read");
     b.line(2, "contents: read");
     b.blank();
     b.line(0, "jobs:");
@@ -306,6 +319,8 @@ pub fn callable_workflow(
     b.line(10, "REF_PROTECTED: ${{ github.ref_protected }}");
     b.line(10, "HEAD_SHA: ${{ github.sha }}");
     b.line(10, "WORKFLOW_SHA: ${{ github.workflow_sha }}");
+    b.line(10, "GH_TOKEN: ${{ github.token }}");
+    b.line(10, "REPOSITORY: ${{ github.repository }}");
     let cache_ids = caches
         .declarations()
         .iter()
@@ -323,7 +338,7 @@ pub fn callable_workflow(
     b.line(4, "needs: validate-request");
     b.line(
         4,
-        "if: ${{ inputs.lane == 'velnor' || inputs.lane == 'both' || (inputs.lane == '' && (github.repository_owner == 'tailrocks' || github.repository_owner == 'ChainArgos')) }}",
+        "if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && (inputs.lane == 'velnor' || inputs.lane == 'both' || (inputs.lane == '' && (github.repository_owner == 'tailrocks' || github.repository_owner == 'ChainArgos'))) }}",
     );
     b.line(
         4,
@@ -368,7 +383,7 @@ pub fn callable_workflow(
     b.line(4, "needs: validate-request");
     b.line(
         4,
-        "if: ${{ inputs.lane == 'github' || inputs.lane == 'both' || (inputs.lane == '' && github.repository_owner == 'jackin-project') }}",
+        "if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && (inputs.lane == 'github' || inputs.lane == 'both' || (inputs.lane == '' && github.repository_owner == 'jackin-project')) }}",
     );
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 30");
@@ -415,6 +430,8 @@ pub fn callable_workflow(
         b.blank();
     }
 
+    render_cache_proof_jobs(&mut b, contract, caches, block_sha, &run_gate, &aggregate);
+
     // Lane-verdict aggregator: fail-closed positive per-lane truth table.
     b.line(2, "contract:");
     b.line(4, "name: contract");
@@ -424,6 +441,7 @@ pub fn callable_workflow(
     if contract.platform_only {
         b.line(6, "- platform-lane");
     }
+    b.line(6, "- cache-proof-contract");
     b.line(4, "if: ${{ always() }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 10");
@@ -458,6 +476,15 @@ pub fn callable_workflow(
         b.line(10, "PLATFORM_RESULT: skipped");
         b.line(10, "PLATFORM_CONTRACT: \"\"");
     }
+    b.line(10, "OPERATION: ${{ inputs.benchmark_campaign != '' && 'benchmark' || inputs.cache_proof_id != '' && 'cache-proof' || 'ordinary' }}");
+    b.line(
+        10,
+        "CACHE_PROOF_RESULT: ${{ needs.cache-proof-contract.result }}",
+    );
+    b.line(
+        10,
+        "CACHE_PROOF_CONTRACT: ${{ needs.cache-proof-contract.outputs.contract }}",
+    );
     b.line(8, "shell: bash");
     b.run_block(8, CONTRACT_VERDICT_SCRIPT);
 
@@ -515,6 +542,502 @@ fn callable_auxiliary_inputs(b: &mut Builder) {
     }
 }
 
+fn render_cache_proof_jobs(
+    b: &mut Builder,
+    contract: &ClassContract,
+    caches: &CacheContract,
+    block_sha: &str,
+    run_gate: &str,
+    aggregate: &str,
+) {
+    let declarations = caches
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == contract.class)
+        .collect::<Vec<_>>();
+    for (job, runner, lane) in [
+        ("github_restore", "ubuntu-latest", "github"),
+        ("velnor_restore", "${{ 'velnor-trusted' }}", "velnor"),
+    ] {
+        b.line(2, &format!("{job}:"));
+        b.line(4, &format!("name: {lane} restore proof"));
+        b.line(4, "needs: validate-request");
+        b.line(
+            4,
+            "if: ${{ inputs.benchmark_campaign != '' || inputs.cache_proof_id != '' }}",
+        );
+        b.line(4, &format!("runs-on: {runner}"));
+        b.line(4, "timeout-minutes: 30");
+        b.line(4, "permissions:");
+        b.line(6, "contents: read");
+        b.line(4, "steps:");
+        b.line(6, "- name: Check out repository");
+        b.line(
+            8,
+            &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+        );
+        for cache in &declarations {
+            let id = cache.id.as_str();
+            let selected = format!(
+                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+            );
+            if lane == "velnor" {
+                b.line(6, &format!("- name: Capture {id} proof authority"));
+                b.line(8, &format!("id: proof-authority-{id}"));
+                b.line(8, &format!("if: {selected}"));
+                b.line(8, "shell: bash");
+                b.line(8, "env:");
+                b.line(
+                    10,
+                    &format!(
+                        "CACHE_ENV_PREFIX: {}",
+                        id.replace('-', "_").to_ascii_uppercase()
+                    ),
+                );
+                b.run_block(8, VELNOR_AUTHORITY_CAPTURE_SCRIPT);
+                b.line(6, &format!("- name: Validate {id} proof authority"));
+                b.line(8, &format!("if: {selected}"));
+                b.line(
+                    8,
+                    &format!(
+                        "uses: {CANONICAL_OWNER}/{ACTIONS_REPO}/actions/cache-contract@{block_sha}"
+                    ),
+                );
+                b.line(8, "with:");
+                b.line(10, "schema-version: 1");
+                b.line(10, &format!("declaration-sha256: ${{{{ steps.proof-authority-{id}.outputs.declaration_sha256 }}}}"));
+                b.line(
+                    10,
+                    &format!(
+                        "expected-declaration-sha256: {}",
+                        caches.declaration_sha256()
+                    ),
+                );
+                b.line(
+                    10,
+                    &format!("cache-id: ${{{{ steps.proof-authority-{id}.outputs.cache_id }}}}"),
+                );
+                b.line(10, &format!("expected-cache-id: {id}"));
+                b.line(
+                    10,
+                    &format!("scope: ${{{{ steps.proof-authority-{id}.outputs.scope }}}}"),
+                );
+                b.line(10, "expected-scope: trusted");
+                b.line(
+                    10,
+                    &format!("cache-owner: ${{{{ steps.proof-authority-{id}.outputs.owner }}}}"),
+                );
+                b.line(10, "expected-cache-owner: ${{ github.repository }}");
+                b.line(10, &format!("reservation-id: ${{{{ steps.proof-authority-{id}.outputs.reservation_id }}}}"));
+                b.line(10, "expected-reservation-id: ${{ inputs.benchmark_reservation != '' && inputs.benchmark_reservation || inputs.cache_proof_id }}");
+                b.line(10, &format!("required-peak-bytes: {}", cache.peak_bytes));
+                b.line(10, &format!("quota-reserved-bytes: ${{{{ steps.proof-authority-{id}.outputs.reserved_bytes }}}}"));
+                b.line(10, &format!("attributed-bytes: ${{{{ steps.proof-authority-{id}.outputs.attributed_bytes }}}}"));
+                b.line(
+                    10,
+                    &format!(
+                        "cleanup-state: ${{{{ steps.proof-authority-{id}.outputs.cleanup_state }}}}"
+                    ),
+                );
+                b.line(10, &format!("materialization-id: ${{{{ steps.proof-authority-{id}.outputs.materialization_id }}}}"));
+                b.line(
+                    10,
+                    &format!("expected-materialization-id: ${{{{ github.run_id }}}}-{job}-{id}"),
+                );
+            }
+            b.line(6, &format!("- name: Clean {id} restore destination"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.run_block(8, &clean_cache_script(cache));
+            b.line(6, &format!("- name: Restore {id} without saving"));
+            b.line(8, &format!("id: restore-{id}"));
+            b.line(8, &format!("if: ${{{{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}}}"));
+            b.line(
+                8,
+                &format!("uses: actions/cache/restore@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
+            );
+            cache_action_with(b, contract.class, cache, false);
+            b.line(
+                6,
+                &format!("- name: Package immutable {id} restore evidence"),
+            );
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.line(8, "env:");
+            b.line(
+                10,
+                &format!("CACHE_HIT: ${{{{ steps.restore-{id}.outputs.cache-hit }}}}"),
+            );
+            b.run_block(8, &package_cache_script(cache, lane, "restore"));
+            b.line(6, &format!("- name: Upload {id} restore evidence"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, &format!("uses: actions/upload-artifact@{UPLOAD_ARTIFACT_REF} # {UPLOAD_ARTIFACT_VERSION}"));
+            b.line(8, "with:");
+            b.line(
+                10,
+                &format!("name: proof-restore-{lane}-{id}-${{{{ github.run_id }}}}"),
+            );
+            b.line(10, &format!("path: .velnor-proof/restore/{lane}/{id}"));
+            b.line(10, "if-no-files-found: error");
+            b.line(10, "compression-level: 0");
+        }
+        b.blank();
+    }
+
+    b.line(2, "restore_barrier:");
+    b.line(4, "name: restore barrier");
+    b.line(4, "needs:");
+    b.line(6, "- github_restore");
+    b.line(6, "- velnor_restore");
+    b.line(
+        4,
+        "if: ${{ inputs.benchmark_campaign != '' || inputs.cache_proof_id != '' }}",
+    );
+    b.line(4, "runs-on: ubuntu-latest");
+    b.line(4, "timeout-minutes: 10");
+    b.line(4, "steps:");
+    for cache in &declarations {
+        let id = cache.id.as_str();
+        let selected = format!(
+            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+        );
+        for lane in ["github", "velnor"] {
+            b.line(6, &format!("- name: Download {lane} {id} restore evidence"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, &format!("uses: actions/download-artifact@{DOWNLOAD_ARTIFACT_REF} # {DOWNLOAD_ARTIFACT_VERSION}"));
+            b.line(8, "with:");
+            b.line(
+                10,
+                &format!("name: proof-restore-{lane}-{id}-${{{{ github.run_id }}}}"),
+            );
+            b.line(10, &format!("path: .velnor-proof/barrier/{lane}/{id}"));
+        }
+    }
+    b.line(6, "- name: Verify paired restore evidence and temperature");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    b.line(10, "CACHE_TEMPERATURE: ${{ inputs.cache_temperature }}");
+    b.line(10, "CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}");
+    b.line(10, "BENCHMARK_CACHE_ID: ${{ inputs.benchmark_cache_id }}");
+    b.run_block(8, &barrier_script(&declarations));
+    b.blank();
+
+    for (job, runner, lane, restore_job) in [
+        (
+            "github_execute",
+            "ubuntu-latest",
+            "github",
+            "github_restore",
+        ),
+        (
+            "velnor_execute",
+            "${{ 'velnor-trusted' }}",
+            "velnor",
+            "velnor_restore",
+        ),
+    ] {
+        b.line(2, &format!("{job}:"));
+        b.line(
+            4,
+            &format!("name: {lane} execute proof (${{{{ matrix.slot }}}})"),
+        );
+        b.line(4, "needs:");
+        b.line(6, "- restore_barrier");
+        b.line(6, &format!("- {restore_job}"));
+        b.line(
+            4,
+            "if: ${{ inputs.benchmark_campaign != '' || inputs.cache_proof_id != '' }}",
+        );
+        b.line(4, "strategy:");
+        b.line(6, "fail-fast: false");
+        b.line(6, "matrix:");
+        b.line(
+            8,
+            "slot: ${{ fromJSON(inputs.benchmark_fanout == '8' && '[0,1,2,3,4,5,6,7]' || '[0]') }}",
+        );
+        b.line(4, &format!("runs-on: {runner}"));
+        b.line(4, "timeout-minutes: 45");
+        b.line(4, "steps:");
+        b.line(6, "- name: Check out repository into fresh workspace");
+        b.line(
+            8,
+            &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+        );
+        for cache in &declarations {
+            let id = cache.id.as_str();
+            let selected = format!(
+                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+            );
+            b.line(6, &format!("- name: Download {lane} {id} restore artifact"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, &format!("uses: actions/download-artifact@{DOWNLOAD_ARTIFACT_REF} # {DOWNLOAD_ARTIFACT_VERSION}"));
+            b.line(8, "with:");
+            b.line(
+                10,
+                &format!("name: proof-restore-{lane}-{id}-${{{{ github.run_id }}}}"),
+            );
+            b.line(10, &format!("path: .velnor-proof/execute/{lane}/{id}"));
+            b.line(6, &format!("- name: Verify and materialize {lane} {id}"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.run_block(8, &materialize_script(id, lane));
+        }
+        b.line(6, "- name: Set up mise toolchain");
+        b.line(
+            8,
+            &format!("uses: jdx/mise-action@{MISE_ACTION_REF} # {MISE_ACTION_VERSION}"),
+        );
+        for gate in &contract.gates {
+            if gate.applicability == crate::model::Applicability::Both {
+                gate_step(b, gate, run_gate);
+            }
+        }
+        b.line(6, "- name: Collect portable proof metrics");
+        b.line(8, "shell: bash");
+        b.line(8, "env:");
+        b.line(10, &format!("PROOF_LANE: {lane}"));
+        b.line(10, "PROOF_SLOT: ${{ matrix.slot }}");
+        b.line(10, "PROOF_CORRELATION: ${{ needs.restore_barrier.result }}:${{ inputs.benchmark_campaign }}:${{ inputs.cache_proof_id }}");
+        b.run_block(8, METRICS_SCRIPT);
+        for cache in &declarations {
+            let id = cache.id.as_str();
+            let selected = format!(
+                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+            );
+            b.line(6, &format!("- name: Package {lane} {id} post-state"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.line(8, "env:");
+            b.line(10, "CACHE_HIT: post");
+            b.run_block(8, &package_cache_script(cache, lane, "post"));
+        }
+        b.line(6, "- name: Upload execute post-state and metrics");
+        b.line(
+            8,
+            &format!(
+                "uses: actions/upload-artifact@{UPLOAD_ARTIFACT_REF} # {UPLOAD_ARTIFACT_VERSION}"
+            ),
+        );
+        b.line(8, "with:");
+        b.line(
+            10,
+            &format!("name: proof-post-{lane}-${{{{ github.run_id }}}}-${{{{ matrix.slot }}}}"),
+        );
+        b.line(10, "path: |");
+        b.line(12, &format!(".velnor-proof/post/{lane}"));
+        b.line(12, ".velnor-proof/metrics");
+        b.line(10, "if-no-files-found: error");
+        b.line(10, "compression-level: 0");
+        b.line(6, "- name: Emit execute contract");
+        b.line(8, "id: aggregate");
+        b.line(8, &format!("uses: {aggregate}"));
+        b.blank();
+    }
+
+    b.line(2, "cache_publish:");
+    b.line(4, "name: sole cache publisher");
+    b.line(4, "needs:");
+    b.line(6, "- restore_barrier");
+    b.line(6, "- github_execute");
+    b.line(6, "- velnor_execute");
+    b.line(4, "if: ${{ (inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled') }}");
+    b.line(4, "runs-on: ubuntu-latest");
+    b.line(4, "timeout-minutes: 20");
+    b.line(4, "steps:");
+    b.line(6, "- name: Check out repository");
+    b.line(
+        8,
+        &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+    );
+    b.line(6, "- name: Download deterministic GitHub post-state");
+    b.line(
+        8,
+        &format!(
+            "uses: actions/download-artifact@{DOWNLOAD_ARTIFACT_REF} # {DOWNLOAD_ARTIFACT_VERSION}"
+        ),
+    );
+    b.line(8, "with:");
+    b.line(10, "name: proof-post-github-${{ github.run_id }}-0");
+    b.line(10, "path: .velnor-proof/publish");
+    for cache in &declarations {
+        let id = cache.id.as_str();
+        let selected = format!(
+            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+        );
+        b.line(
+            6,
+            &format!("- name: Materialize deterministic {id} post-state"),
+        );
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.run_block(8, &publish_materialize_script(id));
+        b.line(6, &format!("- name: Publish {id} exactly once"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(
+            8,
+            &format!("uses: actions/cache/save@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
+        );
+        cache_action_with(b, contract.class, cache, false);
+    }
+    b.blank();
+
+    b.line(2, "cache-proof-contract:");
+    b.line(4, "name: cache proof contract");
+    b.line(4, "needs:");
+    b.line(6, "- github_restore");
+    b.line(6, "- velnor_restore");
+    b.line(6, "- restore_barrier");
+    b.line(6, "- github_execute");
+    b.line(6, "- velnor_execute");
+    b.line(6, "- cache_publish");
+    b.line(
+        4,
+        "if: ${{ always() && (inputs.benchmark_campaign != '' || inputs.cache_proof_id != '') }}",
+    );
+    b.line(4, "runs-on: ubuntu-latest");
+    b.line(4, "timeout-minutes: 10");
+    b.line(4, "outputs:");
+    b.line(6, "contract: ${{ steps.contract.outputs.contract }}");
+    b.line(4, "steps:");
+    b.line(6, "- name: Enforce proof DAG contract");
+    b.line(8, "id: contract");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    for name in [
+        "GITHUB_RESTORE",
+        "VELNOR_RESTORE",
+        "RESTORE_BARRIER",
+        "GITHUB_EXECUTE",
+        "VELNOR_EXECUTE",
+        "CACHE_PUBLISH",
+    ] {
+        let job = name.to_ascii_lowercase();
+        b.line(10, &format!("{name}: ${{{{ needs.{job}.result }}}}"));
+    }
+    b.line(10, "TEMPERATURE: ${{ inputs.cache_temperature }}");
+    b.line(10, "BENCHMARK_MODE: ${{ inputs.benchmark_cache_mode }}");
+    b.run_block(8, PROOF_CONTRACT_SCRIPT);
+    b.blank();
+}
+
+fn fixed_roots(cache: &CacheDeclaration) -> String {
+    cache
+        .paths
+        .iter()
+        .map(|path| format!("'{path}'"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn clean_cache_script(cache: &CacheDeclaration) -> String {
+    format!(
+        "set -euo pipefail\nshopt -s globstar nullglob\nfor root in {}; do rm -rf -- \"${{root}}\"; done",
+        fixed_roots(cache)
+    )
+}
+
+fn package_cache_script(cache: &CacheDeclaration, lane: &str, phase: &str) -> String {
+    let destination = format!(".velnor-proof/{phase}/{lane}/{}", cache.id);
+    format!(
+        "set -euo pipefail\nshopt -s globstar nullglob\ndestination='{destination}'\nrm -rf -- \"${{destination}}\"\nmkdir -p -- \"${{destination}}\"\n: > \"${{destination}}/files.list\"\nfor root in {roots}; do\n  if [[ -e \"${{root}}\" ]]; then find \"${{root}}\" -type f -print; fi\ndone | LC_ALL=C sort -u > \"${{destination}}/files.list\"\ntar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf \"${{destination}}/cache.tar\" -T \"${{destination}}/files.list\"\nsha256sum \"${{destination}}/files.list\" | cut -d' ' -f1 > \"${{destination}}/manifest.sha256\"\nsha256sum \"${{destination}}/cache.tar\" | cut -d' ' -f1 > \"${{destination}}/archive.sha256\"\nprintf '%s\\n' \"${{CACHE_HIT}}\" > \"${{destination}}/hit\"\nprintf '%s\\n' '{id}' > \"${{destination}}/cache-id\"\nprintf '%s\\n' '{lane}' > \"${{destination}}/lane\"",
+        destination = destination,
+        roots = fixed_roots(cache),
+        id = cache.id,
+        lane = lane,
+    )
+}
+
+fn cache_action_with(
+    b: &mut Builder,
+    class: RepositoryClass,
+    cache: &CacheDeclaration,
+    include_restore_prefix: bool,
+) {
+    b.line(8, "with:");
+    b.line(10, "path: |");
+    for path in &cache.paths {
+        b.line(12, path);
+    }
+    let globs = cache
+        .lock_globs
+        .iter()
+        .map(|glob| format!("'{glob}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let phase = hex::encode(Sha256::digest(cache.phase.as_bytes()));
+    b.line(
+        10,
+        &format!(
+            "key: ci-v${{{{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{phase}",
+            class.code(), cache.id
+        ),
+    );
+    if include_restore_prefix && cache.compatible_phase_prefix {
+        b.line(10, "restore-keys: |");
+        b.line(
+            12,
+            &format!(
+                "ci-v${{{{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
+                class.code(), cache.id
+            ),
+        );
+    }
+}
+
+fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
+    let mut script = String::from("set -euo pipefail\nselected=0\n");
+    for cache in declarations {
+        let id = cache.id.as_str();
+        script.push_str(&format!(
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || \"${{BENCHMARK_CACHE_ID}}\" == \"{id}\" ]]; then\n  selected=$((selected + 1))\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  for root in \"${{github}}\" \"${{velnor}}\"; do\n    test -f \"${{root}}/cache.tar\" -a -f \"${{root}}/archive.sha256\" -a -f \"${{root}}/manifest.sha256\" -a -f \"${{root}}/hit\"\n    test \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\n  done\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
+        ));
+    }
+    script.push_str(
+        "[[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }\n",
+    );
+    script
+}
+
+fn materialize_script(id: &str, lane: &str) -> String {
+    format!(
+        "set -euo pipefail\nroot='.velnor-proof/execute/{lane}/{id}'\ntest \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\ntar -xf \"${{root}}/cache.tar\" -C .\nprintf '%s\\n' '{lane}:{id}:${{{{ matrix.slot }}}}' > \"${{root}}/materialization-id\""
+    )
+}
+
+fn publish_materialize_script(id: &str) -> String {
+    format!(
+        "set -euo pipefail\nroot='.velnor-proof/publish/post/github/{id}'\ntest \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\ntar -xf \"${{root}}/cache.tar\" -C ."
+    )
+}
+
+const METRICS_SCRIPT: &str = r#"set -euo pipefail
+mkdir -p .velnor-proof/metrics
+cpu_ms="$(awk '{printf "%d", ($14+$15)*1000/100}' /proc/self/stat 2>/dev/null || printf '0')"
+peak_kib="$(awk '/VmHWM:/ {print $2}' /proc/self/status 2>/dev/null || printf '0')"
+disk_bytes="$(du -sb . 2>/dev/null | awk '{print $1}' || printf '0')"
+psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu 2>/dev/null || true)"
+for value in "${cpu_ms}" "${peak_kib}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
+printf '{"schema":1,"lane":"%s","slot":%s,"cpu_ms":%s,"peak_memory_kib":%s,"disk_bytes":%s,"cache_restore_ms":0,"cache_save_ms":0,"cache_copy_ms":0,"cache_lock_wait_ms":0,"disk_latency_ms":0,"psi_cpu":"%s","cache_result":"proof","cache_bytes":%s,"cache_files":0,"output_digest":"pending","correlation":"%s"}\n' \
+  "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
+  > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+"#;
+
+/// Fail-closed final truth table for the cache proof DAG.
+pub const PROOF_CONTRACT_SCRIPT: &str = r#"set -euo pipefail
+for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GITHUB_EXECUTE}" "${VELNOR_EXECUTE}"; do
+  [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
+done
+publish_expected=false
+[[ "${TEMPERATURE}" == cold || "${BENCHMARK_MODE}" == enabled ]] && publish_expected=true
+if ${publish_expected}; then
+  [[ "${CACHE_PUBLISH}" == success ]] || { echo "cold/enabled proof publisher did not succeed" >&2; exit 1; }
+else
+  [[ "${CACHE_PUBLISH}" == skipped ]] || { echo "warm/disabled proof publisher must skip" >&2; exit 1; }
+fi
+echo 'contract=success' >> "${GITHUB_OUTPUT}"
+"#;
+
 fn lane_steps(
     b: &mut Builder,
     contract: &ClassContract,
@@ -528,6 +1051,82 @@ fn lane_steps(
         8,
         &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
     );
+    if lane == Lane::Velnor {
+        for cache in caches
+            .declarations()
+            .iter()
+            .filter(|cache| cache.class == contract.class)
+        {
+            let id = cache.id.as_str();
+            b.line(6, &format!("- name: Capture {id} Velnor cache authority"));
+            b.line(8, &format!("id: velnor-authority-{id}"));
+            b.line(8, "if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}");
+            b.line(8, "shell: bash");
+            b.line(8, "env:");
+            b.line(
+                10,
+                &format!(
+                    "CACHE_ENV_PREFIX: {}",
+                    id.replace('-', "_").to_ascii_uppercase()
+                ),
+            );
+            b.run_block(8, VELNOR_AUTHORITY_CAPTURE_SCRIPT);
+            b.line(6, &format!("- name: Validate {id} Velnor cache authority"));
+            b.line(8, "if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}");
+            b.line(
+                8,
+                &format!("uses: {CANONICAL_OWNER}/{ACTIONS_REPO}/actions/cache-contract@{block_sha_placeholder}", block_sha_placeholder = run_gate.rsplit_once('@').map_or("", |(_, sha)| sha)),
+            );
+            b.line(8, "with:");
+            b.line(10, "schema-version: 1");
+            b.line(10, &format!("declaration-sha256: ${{{{ steps.velnor-authority-{id}.outputs.declaration_sha256 }}}}"));
+            b.line(
+                10,
+                &format!(
+                    "expected-declaration-sha256: {}",
+                    caches.declaration_sha256()
+                ),
+            );
+            b.line(
+                10,
+                &format!("cache-id: ${{{{ steps.velnor-authority-{id}.outputs.cache_id }}}}"),
+            );
+            b.line(10, &format!("expected-cache-id: {id}"));
+            b.line(
+                10,
+                &format!("scope: ${{{{ steps.velnor-authority-{id}.outputs.scope }}}}"),
+            );
+            b.line(10, "expected-scope: trusted");
+            b.line(
+                10,
+                &format!("cache-owner: ${{{{ steps.velnor-authority-{id}.outputs.owner }}}}"),
+            );
+            b.line(10, "expected-cache-owner: ${{ github.repository }}");
+            b.line(
+                10,
+                &format!(
+                    "reservation-id: ${{{{ steps.velnor-authority-{id}.outputs.reservation_id }}}}"
+                ),
+            );
+            b.line(
+                10,
+                &format!(
+                    "expected-reservation-id: ${{{{ github.run_id }}}}:${{{{ github.job }}}}:{id}"
+                ),
+            );
+            b.line(10, &format!("required-peak-bytes: {}", cache.peak_bytes));
+            b.line(10, &format!("quota-reserved-bytes: ${{{{ steps.velnor-authority-{id}.outputs.reserved_bytes }}}}"));
+            b.line(10, &format!("attributed-bytes: ${{{{ steps.velnor-authority-{id}.outputs.attributed_bytes }}}}"));
+            b.line(
+                10,
+                &format!(
+                    "cleanup-state: ${{{{ steps.velnor-authority-{id}.outputs.cleanup_state }}}}"
+                ),
+            );
+            b.line(10, &format!("materialization-id: ${{{{ steps.velnor-authority-{id}.outputs.materialization_id }}}}"));
+            b.line(10, &format!("expected-materialization-id: ${{{{ github.run_id }}}}-${{{{ github.job }}}}-{id}"));
+        }
+    }
     let declarations = caches
         .declarations()
         .iter()
@@ -674,7 +1273,13 @@ correlation="ordinary"
 if [[ -n "${RECOVERY_PROOF_ID}" ]]; then
   [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF_TYPE}" == "branch" ]] || fail "recovery requires branch dispatch"
   [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ && "${WORKFLOW_SHA}" == "${HEAD_SHA}" ]] || fail "recovery ref is not exact workflow head"
-  [[ "${RECOVERY_PROOF_ID}" == "recovery-${HEAD_SHA}-"* ]] || fail "recovery proof is not bound to exact head"
+  [[ "${RECOVERY_PROOF_ID}" =~ ^recovery-pr-([1-9][0-9]*)-([0-9a-f]{40})-([a-z0-9][a-z0-9-]{7,63})$ ]] || fail "recovery proof format invalid"
+  pr_number="${BASH_REMATCH[1]}"; claimed_sha="${BASH_REMATCH[2]}"
+  [[ "${claimed_sha}" == "${HEAD_SHA}" ]] || fail "recovery proof is not bound to dispatched head"
+  current_pr_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq .head.sha)"
+  [[ "${current_pr_sha}" == "${HEAD_SHA}" ]] || fail "dispatch ref is not exact current PR head"
+  duplicate_count="$(gh api "repos/${REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=100" --paginate --slurp --jq "map(.workflow_runs[]) | map(select(.display_title == \"CI recovery ${RECOVERY_PROOF_ID}\")) | length")"
+  [[ "${duplicate_count}" == "1" ]] || fail "duplicate or unknown recovery operation"
   is_id "${RECOVERY_PROOF_ID}" || fail "invalid recovery proof id"
   [[ -z "${BENCHMARK_CAMPAIGN}${CACHE_PROOF_ID}" ]] || fail "recovery cannot combine with another operation"
   correlation="${RECOVERY_PROOF_ID}"
@@ -699,6 +1304,35 @@ else
   [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"
 fi
 printf 'correlation=%s\n' "${correlation}" >> "${GITHUB_OUTPUT}"
+"#;
+
+const VELNOR_AUTHORITY_CAPTURE_SCRIPT: &str = r#"set -euo pipefail
+read_field() {
+  local name="VELNOR_CACHE_${CACHE_ENV_PREFIX}_$1"
+  local value="${!name-}"
+  [[ -n "${value}" ]] || { echo "missing Velnor cache authority field ${name}" >&2; exit 1; }
+  printf '%s' "${value}"
+}
+declaration_sha256="$(read_field DECLARATION_SHA256)"
+cache_id="$(read_field ID)"
+scope="$(read_field SCOPE)"
+owner="$(read_field OWNER)"
+reservation_id="$(read_field RESERVATION_ID)"
+reserved_bytes="$(read_field RESERVED_BYTES)"
+attributed_bytes="$(read_field ATTRIBUTED_BYTES)"
+cleanup_state="$(read_field CLEANUP_STATE)"
+materialization_id="$(read_field MATERIALIZATION_ID)"
+{
+  printf 'declaration_sha256=%s\n' "${declaration_sha256}"
+  printf 'cache_id=%s\n' "${cache_id}"
+  printf 'scope=%s\n' "${scope}"
+  printf 'owner=%s\n' "${owner}"
+  printf 'reservation_id=%s\n' "${reservation_id}"
+  printf 'reserved_bytes=%s\n' "${reserved_bytes}"
+  printf 'attributed_bytes=%s\n' "${attributed_bytes}"
+  printf 'cleanup_state=%s\n' "${cleanup_state}"
+  printf 'materialization_id=%s\n' "${materialization_id}"
+} >> "${GITHUB_OUTPUT}"
 "#;
 
 /// Materialize a consumer file from a committed template by atomically replacing
@@ -790,6 +1424,16 @@ const CONTRACT_VERDICT_SCRIPT: &str = r#"set -euo pipefail
 # lane succeeded with contract=success and every non-selected lane is skipped with
 # an empty output. A failed, unavailable, or skipped selected lane is never
 # credited, and one lane never substitutes for the other.
+if [ "${OPERATION}" != ordinary ]; then
+  if [ "${CACHE_PROOF_RESULT}" != success ] || [ "${CACHE_PROOF_CONTRACT}" != success ]; then
+    echo "contract: ${OPERATION} proof DAG did not pass" >&2
+    exit 1
+  fi
+  if [ "${VELNOR_RESULT}" != skipped ] || [ "${GITHUB_RESULT}" != skipped ] || [ -n "${VELNOR_CONTRACT}${GITHUB_CONTRACT}" ]; then
+    echo "contract: ordinary lane jobs ran during ${OPERATION}" >&2
+    exit 1
+  fi
+else
 case "${LANE}" in
   velnor)
     if [ "${VELNOR_RESULT}" != "success" ] || [ "${VELNOR_CONTRACT}" != "success" ]; then
@@ -826,6 +1470,11 @@ case "${LANE}" in
     exit 1
     ;;
 esac
+  if [ "${CACHE_PROOF_RESULT}" != skipped ] || [ -n "${CACHE_PROOF_CONTRACT}" ]; then
+    echo "contract: proof DAG ran during ordinary execution" >&2
+    exit 1
+  fi
+fi
 if [ "${PLATFORM_REQUIRED}" = "true" ]; then
   if [ "${PLATFORM_RESULT}" != "success" ] || [ "${PLATFORM_CONTRACT}" != "success" ]; then
     echo "contract: required GitHub platform lane did not pass" >&2
