@@ -1285,13 +1285,15 @@ fn cache_action_with(
     }
 }
 
-fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
-    let mut script = format!("set -euo pipefail\n{EVIDENCE_VERIFIER}\nselected=0\n");
+pub fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
+    let mut script = format!(
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n{CACHE_TEMPERATURE_FUNCTION}\nselected=0\n"
+    );
     for cache in declarations {
         let id = cache.id.as_str();
         let env = id.replace('-', "_").to_ascii_uppercase();
         script.push_str(&format!(
-            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    verify_cache_temperature \"${{CACHE_TEMPERATURE}}\" \"$(cat \"${{github}}/hit\")\" \"$(cat \"${{velnor}}/hit\")\"\n  fi\nfi\n"
         ));
     }
     script.push_str(
@@ -1299,6 +1301,15 @@ fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
     );
     script
 }
+
+pub const CACHE_TEMPERATURE_FUNCTION: &str = r#"verify_cache_temperature() {
+  local temperature="$1" github_hit="$2" velnor_hit="$3"
+  case "${temperature}" in
+    cold) [[ "${github_hit}" != true && "${velnor_hit}" != true ]] ;;
+    warm) [[ "${github_hit}" == true && "${velnor_hit}" == true ]] ;;
+    *) return 1 ;;
+  esac
+}"#;
 
 /// Fail-closed verifier shared by every cache-evidence boundary.
 pub const EVIDENCE_VERIFIER: &str = r#"safe_link_target() {

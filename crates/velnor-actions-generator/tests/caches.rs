@@ -325,6 +325,45 @@ fn cache_validator_rejects_quota_overflow_and_under_reservation() {
 }
 
 #[test]
+fn quota_pressure_exhaustion_aliasing_and_missing_attribution_fail_closed() {
+    assert!(run_validator(&[("CACHE_QUOTA_RESERVED_BYTES", "1000")]));
+    assert!(!run_validator(&[("CACHE_QUOTA_RESERVED_BYTES", "999")]));
+    assert!(!run_validator(&[("CACHE_ATTRIBUTED_BYTES", "1001")]));
+    assert!(!run_validator(&[("CACHE_ATTRIBUTED_BYTES", "")]));
+    assert!(!run_validator(&[(
+        "CACHE_MATERIALIZATION_ID",
+        "other-job.materialization-1",
+    )]));
+}
+
+fn run_temperature_contract(temperature: &str, github_hit: &str, velnor_hit: &str) -> bool {
+    let script = format!(
+        "set -euo pipefail\n{}\nverify_cache_temperature \"${{TEMPERATURE}}\" \"${{GITHUB_HIT}}\" \"${{VELNOR_HIT}}\"",
+        velnor_actions_generator::render::CACHE_TEMPERATURE_FUNCTION
+    );
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .env("TEMPERATURE", temperature)
+        .env("GITHUB_HIT", github_hit)
+        .env("VELNOR_HIT", velnor_hit)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn cold_hit_and_warm_miss_are_rejected_on_either_lane() {
+    assert!(run_temperature_contract("cold", "false", "false"));
+    assert!(!run_temperature_contract("cold", "true", "false"));
+    assert!(!run_temperature_contract("cold", "false", "true"));
+    assert!(run_temperature_contract("warm", "true", "true"));
+    assert!(!run_temperature_contract("warm", "false", "true"));
+    assert!(!run_temperature_contract("warm", "true", "false"));
+    assert!(!run_temperature_contract("unknown", "true", "true"));
+}
+
+#[test]
 fn generated_lanes_embed_identical_bounded_cache_contract() {
     let contract = load();
     let manifest =
@@ -570,6 +609,133 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("CACHE_PUBLISH", "success"),
     ]));
     assert!(!run_proof_contract(&[("TEMPERATURE", "cold")]));
+    assert!(run_proof_contract(&[("BENCHMARK_MODE", "normal")]));
+    assert!(run_proof_contract(&[("BENCHMARK_MODE", "disabled")]));
+    assert!(!run_proof_contract(&[
+        ("BENCHMARK_MODE", "disabled"),
+        ("CACHE_PUBLISH", "success"),
+    ]));
+    assert!(run_proof_contract(&[
+        ("BENCHMARK_MODE", "enabled"),
+        ("CACHE_PUBLISH", "success"),
+    ]));
+    assert!(!run_proof_contract(&[("GITHUB_EXECUTE", "skipped")]));
+    assert!(!run_proof_contract(&[("VELNOR_EXECUTE", "skipped")]));
+}
+
+#[test]
+fn skipped_project_or_reconciliation_job_cannot_satisfy_proof_contract() {
+    for job in [
+        "GITHUB_RESTORE",
+        "VELNOR_RESTORE",
+        "RESTORE_BARRIER",
+        "GITHUB_EXECUTE",
+        "VELNOR_EXECUTE",
+        "PROOF_RECONCILE",
+    ] {
+        assert!(!run_proof_contract(&[(job, "skipped")]), "accepted {job}");
+    }
+}
+
+#[test]
+fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    let documents = yaml_rust2::YamlLoader::load_from_str(&workflow).unwrap();
+    let jobs = &documents[0]["jobs"];
+    let publisher = &jobs["cache_publish"];
+    let condition = publisher["if"].as_str().unwrap();
+    assert!(condition.contains("inputs.cache_temperature == 'cold'"));
+    assert!(condition.contains("inputs.benchmark_cache_mode == 'enabled'"));
+    assert!(!condition.contains("inputs.cache_temperature == 'warm'"));
+    let save_steps = publisher["steps"]
+        .as_vec()
+        .unwrap()
+        .iter()
+        .filter(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/cache/save@"))
+        })
+        .count();
+    assert_eq!(save_steps, 3, "one publisher save per code cache ID");
+    for execute in ["github_execute", "velnor_execute"] {
+        assert!(jobs[execute]["steps"].as_vec().unwrap().iter().all(|step| {
+            !step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/cache/save@"))
+        }));
+    }
+}
+
+#[test]
+fn single_cache_disable_is_isolated_and_enabled_disabled_outputs_reconcile() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    let documents = yaml_rust2::YamlLoader::load_from_str(&workflow).unwrap();
+    let jobs = &documents[0]["jobs"];
+    for lane in ["github_restore", "velnor_restore"] {
+        let steps = jobs[lane]["steps"].as_vec().unwrap();
+        for id in ["tools", "dependencies", "build-output"] {
+            let name = format!("Restore {id} without saving");
+            let step = steps
+                .iter()
+                .find(|step| step["name"].as_str() == Some(name.as_str()))
+                .unwrap();
+            let condition = step["if"].as_str().unwrap();
+            assert!(condition.contains(&format!("inputs.benchmark_cache_id != '{id}'")));
+            assert!(condition.contains("inputs.benchmark_cache_mode != 'disabled'"));
+            for other in ["tools", "dependencies", "build-output"] {
+                if other != id {
+                    assert!(
+                        !condition.contains(&format!("inputs.benchmark_cache_id != '{other}'"))
+                    );
+                }
+            }
+        }
+    }
+    let reconcile_if = jobs["proof_reconcile"]["if"].as_str().unwrap();
+    assert!(!reconcile_if.contains("benchmark_cache_mode"));
+    let verifier = workflow
+        .lines()
+        .filter(|line| line.contains(".output_digest"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(verifier.contains("github_metrics"));
+    assert!(verifier.contains("velnor_metrics"));
+}
+
+#[test]
+fn zero_applicable_cache_proof_work_is_rejected() {
+    let contract = load();
+    let declarations = contract
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == RepositoryClass::Code)
+        .collect::<Vec<_>>();
+    let status = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::barrier_script(
+            &declarations,
+        ))
+        .env("CACHE_PROOF_ID", "")
+        .env("BENCHMARK_CACHE_ID", "")
+        .env("CACHE_TEMPERATURE", "cold")
+        .status()
+        .unwrap();
+    assert!(!status.success());
 }
 
 fn run_post_artifact_identity(artifacts: &str, fanout: &str) -> bool {
@@ -798,6 +964,12 @@ fn reservation_barrier_enforces_exact_one_or_eight_slot_release() {
         &reservation_record(1).replace("campaign-0001", "campaign-wrong"),
         1
     ));
+    let mut expired = reservation_record(1);
+    let start = expired.find("\"expires_at_epoch\":").unwrap();
+    let value_start = start + "\"expires_at_epoch\":".len();
+    let value_end = value_start + expired[value_start..].find(',').unwrap();
+    expired.replace_range(value_start..value_end, "0");
+    assert!(!run_reservation_barrier(&expired, 1));
 }
 
 fn run_reservation_grant(grant: &str, slot: usize) -> bool {

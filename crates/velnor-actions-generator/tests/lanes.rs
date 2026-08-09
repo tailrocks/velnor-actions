@@ -163,6 +163,19 @@ fn optional_operation_interface_is_complete_and_non_selector() {
 }
 
 #[test]
+fn benchmark_waves_on_same_ref_do_not_cancel_each_other() {
+    let template = render::consumer_template(RepositoryClass::Code);
+    let documents = yaml_rust2::YamlLoader::load_from_str(&template).unwrap();
+    let concurrency = &documents[0]["concurrency"];
+    let group = concurrency["group"].as_str().unwrap();
+    let cancel = concurrency["cancel-in-progress"].as_str().unwrap();
+    assert!(group.contains("inputs.benchmark_campaign"));
+    assert!(group.contains("inputs.benchmark_wave"));
+    assert!(group.contains("github.workflow"));
+    assert_eq!(cancel, "${{ inputs.benchmark_campaign == '' }}");
+}
+
+#[test]
 fn tap_platform_gate_is_required_on_macos_independent_of_lane() {
     let workflow = callable(RepositoryClass::Tap);
     assert!(workflow.contains("platform-lane:"));
@@ -365,6 +378,19 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
     let mut spoofed_generated_blob = common.to_vec();
     spoofed_generated_blob.push(("FAKE_WORKFLOW_SUFFIX", "# attacker-controlled valid blob\n"));
     assert!(!run_request_validator(&spoofed_generated_blob));
+    let mut benchmark_generation_overflow = common.to_vec();
+    benchmark_generation_overflow.push(("BENCHMARK_GENERATION", "2"));
+    assert!(!run_request_validator(&benchmark_generation_overflow));
+    assert!(!run_request_validator(&[
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
+        ("CACHE_PROOF_ID", "cache-proof-0001"),
+        ("CACHE_GENERATION", "3"),
+        ("CACHE_TEMPERATURE", "cold"),
+    ]));
 }
 
 #[test]

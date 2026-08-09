@@ -320,3 +320,45 @@ fn generate_is_idempotent() {
         std::fs::read_to_string(dir.join(".github").join("workflows").join("ci-code.yml")).unwrap();
     assert_eq!(before, after);
 }
+
+#[test]
+fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
+    let root = common::repo_root();
+    for (path, expected) in [
+        (
+            "templates/code/ci.yml",
+            "0f58895d657b7b5efcc31376e6fdc3147d6f0ad9ab3fe743b63cc9435ce00924",
+        ),
+        (
+            "templates/tap/ci.yml",
+            "0a645543a6e3aefa71818c8d7fc8875990c58e1a8fdc62bcfa485fc8b61e4328",
+        ),
+        (
+            "templates/apt/ci.yml",
+            "8897163c0ece88c33bb610d816b7dbf31d701ed179b2a3e509a543bd8ef722bf",
+        ),
+        (
+            "templates/fixture/ci.yml",
+            "c0e684c3a2625c4b6075ef8313b389bd0f2ec8f4dde1e8e88795c0642f4e93d7",
+        ),
+        (
+            ".github/workflows/ci-code.yml",
+            "80e08d1f08d839c44b0b817f37de0bd34fb4288fc96f3c2e367b69d9449eebb1",
+        ),
+        (
+            ".github/workflows/ci-tap.yml",
+            "52245edd6f3cf879e7af0eaa1b7bd78540192fd821df7c1d15ac97d91ec77e70",
+        ),
+        (
+            ".github/workflows/ci-apt.yml",
+            "93914d850ec2b0843eed4efa6c5b03cbdeae4177527427f5ed74f4a07a41fd30",
+        ),
+        (
+            ".github/workflows/ci-fixture.yml",
+            "1541f26ca2889dd7403459c00fc42cb9ea22c9c3fe67f89c6445e4aa9a75bc04",
+        ),
+    ] {
+        let bytes = std::fs::read(root.join(path)).unwrap();
+        assert_eq!(hex::encode(Sha256::digest(bytes)), expected, "{path}");
+    }
+}
