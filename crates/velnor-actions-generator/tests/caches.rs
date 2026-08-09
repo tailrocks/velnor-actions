@@ -390,9 +390,8 @@ fn both_mode_has_one_cache_publisher_and_validated_nonempty_digests() {
         "if: ${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}\n        uses: actions/cache@"
     ));
     assert!(workflow.contains("actions/cache/save@"));
-    assert!(workflow.contains(
-        "/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
-    ));
+    assert!(!workflow.contains("github.event.pull_request.head.sha"));
+    assert!(!workflow.contains("github.event.merge_group.head_sha"));
     assert!(workflow.contains(".velnor-protected-base"));
     assert!(workflow.contains("cache key digest missing or invalid"));
     assert!(workflow.contains("^[0-9a-f]{64}$"));

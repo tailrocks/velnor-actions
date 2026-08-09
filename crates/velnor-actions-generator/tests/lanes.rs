@@ -364,7 +364,8 @@ fn parsed_workflows_bind_recovery_permissions_and_unmerged_cache_isolation() {
         assert!(rendered.contains("Check out protected base for unmerged cache identity"));
         assert!(rendered.contains("Publish isolated unmerged"));
         assert!(rendered.contains("actions/cache/save@"));
-        assert!(rendered.contains("/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"));
+        assert!(!rendered.contains("github.event.pull_request.head.sha"));
+        assert!(!rendered.contains("github.event.merge_group.head_sha"));
         assert!(!rendered.contains(
             "if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}\n        uses: actions/cache@"
         ));

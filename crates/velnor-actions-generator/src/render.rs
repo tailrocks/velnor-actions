@@ -1352,11 +1352,40 @@ fn lane_steps(
     run_gate: &str,
     aggregate: &str,
 ) {
+    let declarations = caches
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == contract.class)
+        .collect::<Vec<_>>();
     b.line(6, "- name: Check out repository");
     b.line(
         8,
         &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
     );
+    b.line(6, "- name: Derive current-head cache digests");
+    b.line(8, "id: current-cache-keys");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    for cache in &declarations {
+        let env = cache.id.replace('-', "_").to_ascii_uppercase();
+        let globs = cache
+            .lock_globs
+            .iter()
+            .map(|glob| format!("'{glob}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        b.line(10, &format!("{env}_TOOLCHAIN: ${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}"));
+        b.line(10, &format!("{env}_LOCK: ${{{{ hashFiles({globs}) }}}}"));
+    }
+    let mut current_key_script = String::from("set -euo pipefail\n");
+    for cache in &declarations {
+        let env = cache.id.replace('-', "_").to_ascii_uppercase();
+        let id = cache.id.as_str();
+        current_key_script.push_str(&format!(
+            "for value in \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]] || {{ echo 'current cache digest missing or invalid' >&2; exit 1; }}; done\nprintf '{id}-toolchain=%s\\n{id}-lock=%s\\n' \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
+        ));
+    }
+    b.run_block(8, &current_key_script);
     b.line(
         6,
         "- name: Check out protected base for unmerged cache identity",
@@ -1452,25 +1481,26 @@ fn lane_steps(
             b.line(10, &format!("expected-materialization-id: ${{{{ github.run_id }}}}-${{{{ github.job }}}}-{id}"));
         }
     }
-    let declarations = caches
-        .declarations()
-        .iter()
-        .filter(|cache| cache.class == contract.class)
-        .collect::<Vec<_>>();
     b.line(6, "- name: Derive bounded cache keys");
     b.line(8, "id: cache-keys");
     b.line(8, "shell: bash");
     b.line(8, "env:");
     for cache in &declarations {
         let env = cache.id.replace('-', "_").to_ascii_uppercase();
-        let globs = cache
-            .lock_globs
-            .iter()
-            .map(|glob| format!("'{glob}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        b.line(10, &format!("{env}_TOOLCHAIN: ${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}"));
-        b.line(10, &format!("{env}_LOCK: ${{{{ hashFiles({globs}) }}}}"));
+        b.line(
+            10,
+            &format!(
+                "{env}_TOOLCHAIN: ${{{{ steps.current-cache-keys.outputs['{id}-toolchain'] }}}}",
+                id = cache.id
+            ),
+        );
+        b.line(
+            10,
+            &format!(
+                "{env}_LOCK: ${{{{ steps.current-cache-keys.outputs['{id}-lock'] }}}}",
+                id = cache.id
+            ),
+        );
         let base_globs = cache
             .lock_globs
             .iter()
@@ -1614,7 +1644,7 @@ fn cache_step(
     }
     let id = cache.id.as_str();
     if mode == "save" {
-        b.line(10, &format!("key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-current-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-current-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}/unmerged-${{{{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}}}", class.code()));
+        b.line(10, &format!("key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-current-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-current-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}", class.code()));
     } else {
         b.line(10, &format!("key: ci-v1/{}/{id}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ steps.cache-keys.outputs['{id}-toolchain'] }}}}/${{{{ steps.cache-keys.outputs['{id}-lock'] }}}}/${{{{ steps.cache-keys.outputs['{id}-phase'] }}}}", class.code()));
     }

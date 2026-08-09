@@ -191,6 +191,16 @@ jobs:
           echo 'policy: public unmerged-code routes the Velnor lane to GitHub-hosted execution'
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Derive current-head cache digests
+        id: current-cache-keys
+        shell: bash
+        env:
+          TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml') }}
+        run: |
+          set -euo pipefail
+          for value in "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'current cache digest missing or invalid' >&2; exit 1; }; done
+          printf 'tools-toolchain=%s\ntools-lock=%s\n' "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" >> "${GITHUB_OUTPUT}"
       - name: Check out protected base for unmerged cache identity
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -257,8 +267,8 @@ jobs:
         id: cache-keys
         shell: bash
         env:
-          TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
-          TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml') }}
+          TOOLS_TOOLCHAIN: ${{ steps.current-cache-keys.outputs['tools-toolchain'] }}
+          TOOLS_LOCK: ${{ steps.current-cache-keys.outputs['tools-lock'] }}
           TOOLS_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           TOOLS_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml') }}
           TOOLS_PHASE: 1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
@@ -320,7 +330,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ci-v1/tap/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          key: ci-v1/tap/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
       - name: Emit lane contract
         id: aggregate
         uses: tailrocks/velnor-actions/actions/aggregate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
@@ -336,6 +346,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Derive current-head cache digests
+        id: current-cache-keys
+        shell: bash
+        env:
+          TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
+          TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml') }}
+        run: |
+          set -euo pipefail
+          for value in "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}"; do [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || { echo 'current cache digest missing or invalid' >&2; exit 1; }; done
+          printf 'tools-toolchain=%s\ntools-lock=%s\n' "${TOOLS_TOOLCHAIN}" "${TOOLS_LOCK}" >> "${GITHUB_OUTPUT}"
       - name: Check out protected base for unmerged cache identity
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -347,8 +367,8 @@ jobs:
         id: cache-keys
         shell: bash
         env:
-          TOOLS_TOOLCHAIN: ${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}
-          TOOLS_LOCK: ${{ hashFiles('mise.lock', 'mise.toml') }}
+          TOOLS_TOOLCHAIN: ${{ steps.current-cache-keys.outputs['tools-toolchain'] }}
+          TOOLS_LOCK: ${{ steps.current-cache-keys.outputs['tools-lock'] }}
           TOOLS_BASE_TOOLCHAIN: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}
           TOOLS_BASE_LOCK: ${{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml') }}
           TOOLS_PHASE: 1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
@@ -410,7 +430,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ci-v1/tap/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}/unmerged-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          key: ci-v1/tap/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-current-toolchain'] }}/${{ steps.cache-keys.outputs['tools-current-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
       - name: Emit lane contract
         id: aggregate
         uses: tailrocks/velnor-actions/actions/aggregate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
