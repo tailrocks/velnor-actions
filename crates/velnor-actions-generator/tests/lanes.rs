@@ -4,10 +4,18 @@
 mod common;
 
 use velnor_actions_generator::RepositoryClass;
+use velnor_actions_generator::cache::CacheContract;
 use velnor_actions_generator::model::{Applicability, FleetManifest, Lane, resolve_lanes};
 use velnor_actions_generator::render;
 
 const DUMMY_SHA: &str = "abcdef0123456789abcdef0123456789abcdef01";
+
+fn callable(class: RepositoryClass) -> String {
+    let root = common::repo_root();
+    let manifest = FleetManifest::load(&root).unwrap();
+    let caches = CacheContract::load(&root.join("fleet").join("caches.toml")).unwrap();
+    render::callable_workflow(manifest.class(class), &caches, DUMMY_SHA)
+}
 
 #[test]
 fn lane_selector_accepts_only_three_values() {
@@ -27,20 +35,14 @@ fn resolve_lanes_expands_both_independently() {
 }
 
 #[test]
-fn default_lane_is_velnor_in_template() {
+fn omitted_lane_uses_exact_organization_default() {
     let t = render::consumer_template(RepositoryClass::Code);
-    assert!(t.contains("default: velnor"));
-    assert!(
-        t.contains("|| 'velnor'"),
-        "non-dispatch events default to velnor"
-    );
-    // The choice input exposes exactly the three ordered options.
-    let opts = t.find("options:").expect("options present");
-    let tail = &t[opts..];
-    let v = tail.find("- velnor").unwrap();
-    let g = tail.find("- github").unwrap();
-    let b = tail.find("- both").unwrap();
-    assert!(v < g && g < b, "options ordered velnor, github, both");
+    assert!(t.contains("default: \"\""));
+    assert!(t.contains("github.repository_owner == 'jackin-project' && 'github'"));
+    assert!(t.contains("github.repository_owner == 'tailrocks'"));
+    assert!(t.contains("github.repository_owner == 'ChainArgos'"));
+    assert!(t.contains("&& 'velnor'"));
+    assert!(t.contains("|| 'invalid'"), "unknown owner fails closed");
 }
 
 #[test]
@@ -94,8 +96,7 @@ fn code_class_is_lane_portable() {
 
 #[test]
 fn public_unmerged_routes_velnor_lane_to_github_hosted() {
-    let m = FleetManifest::load(&common::repo_root()).unwrap();
-    let wf = render::callable_workflow(m.class(RepositoryClass::Code), DUMMY_SHA);
+    let wf = callable(RepositoryClass::Code);
     assert!(
         wf.contains(
             "runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'ubuntu-latest' || 'velnor-trusted' }}"
@@ -106,8 +107,7 @@ fn public_unmerged_routes_velnor_lane_to_github_hosted() {
 
 #[test]
 fn both_lanes_are_independent_and_neither_substitutes() {
-    let m = FleetManifest::load(&common::repo_root()).unwrap();
-    let wf = render::callable_workflow(m.class(RepositoryClass::Code), DUMMY_SHA);
+    let wf = callable(RepositoryClass::Code);
     // Two separately named lane jobs; both required in `both`.
     assert!(wf.contains("velnor-lane:"));
     assert!(wf.contains("github-lane:"));
@@ -119,8 +119,7 @@ fn both_lanes_are_independent_and_neither_substitutes() {
 
 #[test]
 fn same_gate_semantics_on_both_lanes_for_portable_gates() {
-    let m = FleetManifest::load(&common::repo_root()).unwrap();
-    let wf = render::callable_workflow(m.class(RepositoryClass::Code), DUMMY_SHA);
+    let wf = callable(RepositoryClass::Code);
     // The install/build/test/lint/format gate commands appear on both lanes.
     for cmd in [
         "mise install --locked",

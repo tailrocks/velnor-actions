@@ -323,3 +323,41 @@ fn cache_validator_rejects_quota_overflow_and_under_reservation() {
     )]));
     assert!(!run_validator(&[("CACHE_ATTRIBUTED_BYTES", "0001")]));
 }
+
+#[test]
+fn generated_lanes_embed_identical_bounded_cache_contract() {
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    for class in velnor_actions_generator::ALL_CLASSES {
+        let workflow = velnor_actions_generator::render::callable_workflow(
+            manifest.class(class),
+            &contract,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        assert!(workflow.contains(&format!(
+            "# Cache declaration SHA-256: {}",
+            contract.declaration_sha256()
+        )));
+        let declarations = contract
+            .declarations()
+            .iter()
+            .filter(|cache| cache.class == class)
+            .count();
+        assert_eq!(
+            workflow
+                .matches("uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0")
+                .count(),
+            declarations * 2,
+            "each cache appears once per lane"
+        );
+        for forbidden in [
+            "github.sha",
+            "github.run_id",
+            "github.run_attempt",
+            "github.ref_name",
+        ] {
+            assert!(!workflow.contains(forbidden), "cache uses {forbidden}");
+        }
+    }
+}

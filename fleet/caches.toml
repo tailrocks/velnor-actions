@@ -53,16 +53,6 @@ compatible_phase_prefix = true
 compatible_lock_prefix = false
 
 [[cache]]
-class = "infra"
-id = "tools"
-artifact_class = "tool-download"
-paths = [".cache/mise", ".local/share/mise/installs"]
-lock_globs = ["mise.lock", "mise.toml"]
-phase = "install"
-compatible_phase_prefix = true
-compatible_lock_prefix = false
-
-[[cache]]
 class = "fixture"
 id = "tools"
 artifact_class = "tool-download"

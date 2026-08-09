@@ -2,6 +2,7 @@
 
 mod common;
 
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 use velnor_actions_generator::model::{FleetManifest, is_sha40};
@@ -17,16 +18,24 @@ fn load() -> FleetManifest {
 #[test]
 fn exact_membership_and_counts() {
     let m = load();
-    assert_eq!(m.repositories().len(), 24, "24 members");
-    assert_eq!(m.members_of(RepositoryClass::Code).len(), 16);
-    assert_eq!(m.members_of(RepositoryClass::Tap).len(), 4);
+    assert_eq!(m.repositories().len(), 28, "28 members");
+    assert_eq!(m.members_of(RepositoryClass::Code).len(), 20);
+    assert_eq!(m.members_of(RepositoryClass::Tap).len(), 5);
     assert_eq!(m.members_of(RepositoryClass::Apt).len(), 2);
-    assert_eq!(m.members_of(RepositoryClass::Infra).len(), 1);
     assert_eq!(m.members_of(RepositoryClass::Fixture).len(), 1);
-    assert_eq!(m.classes().len(), 5);
+    assert_eq!(m.classes().len(), 4);
     for r in m.repositories() {
         assert!(is_sha40(&r.baseline_sha), "{} sha is 40-hex", r.slug);
     }
+}
+
+#[test]
+fn repository_inventory_bytes_are_exactly_bound() {
+    let bytes = std::fs::read(common::repo_root().join("fleet").join("repositories.toml")).unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(bytes)),
+        "7c7d8bed7d95bb985bab68c64065260c494da20c233d6c97d05c3ea3b338c85c"
+    );
 }
 
 fn write_repos(dir: &Path, body: &str) {
@@ -121,7 +130,7 @@ fn templates_are_deterministic() {
 }
 
 #[test]
-fn exactly_five_templates_render() {
+fn exactly_four_templates_render() {
     // One committed template per class, byte-equal to a fresh render.
     for class in ALL_CLASSES {
         let committed = std::fs::read_to_string(
@@ -138,14 +147,14 @@ fn exactly_five_templates_render() {
 #[test]
 fn audit_passes_on_repo() {
     let line = audit::audit(&common::repo_root()).expect("audit passes");
-    assert_eq!(line, "fleet valid: 24 repositories, 5 classes, 5 templates");
+    assert_eq!(line, "fleet valid: 28 repositories, 4 classes, 4 templates");
 }
 
 #[test]
 fn bound_fixture_audit_passes() {
     let dir = common::bound_fixture(DUMMY_SHA);
     let line = audit::audit(&dir).expect("bound audit passes");
-    assert_eq!(line, "fleet valid: 24 repositories, 5 classes, 5 templates");
+    assert_eq!(line, "fleet valid: 28 repositories, 4 classes, 4 templates");
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //!
 //! Regenerates every composite building-block action and every template (and, once
 //! the block SHA is bound, every callable workflow) in memory, compares against the
-//! committed bytes, materializes all 24 repositories to prove each equals its class
+//! committed bytes, materializes all 28 repositories to prove each equals its class
 //! template, and enforces the closure, owner-fan-out, aggregation, gate, and routing
 //! invariants. Any one-byte hand edit to a generated file — including a neutered
 //! composite run-script body — fails the audit.
@@ -31,7 +31,7 @@ const AUDIT_CALVER: &str = "2026.7.0";
 /// gate, or routing violation.
 pub fn audit(root: &Path) -> Result<String, String> {
     let manifest = FleetManifest::load(root)?;
-    CacheContract::load(&root.join("fleet").join("caches.toml"))?;
+    let caches = CacheContract::load(&root.join("fleet").join("caches.toml"))?;
 
     // Composite building blocks must exist and match their canonical bytes exactly
     // (body included), so a neutered run-script fails the audit.
@@ -47,7 +47,7 @@ pub fn audit(root: &Path) -> Result<String, String> {
         audit_consumer_structure(class, &rendered)?;
     }
 
-    // Materialize all 24 repositories and prove each equals its class template.
+    // Materialize all 28 repositories and prove each equals its class template.
     audit_materialization(&manifest)?;
 
     // If the block SHA is bound, audit the full callable-workflow closure.
@@ -56,7 +56,7 @@ pub fn audit(root: &Path) -> Result<String, String> {
         let block_sha = read_block_sha(&block_sha_path)?;
         for class in ALL_CLASSES {
             let contract = manifest.class(class);
-            let rendered = render::callable_workflow(contract, &block_sha);
+            let rendered = render::callable_workflow(contract, &caches, &block_sha);
             let committed = read_committed(&callable_path(root, class))?;
             require_equal(&committed, &rendered, &callable_path_display(class))?;
             audit_callable_structure(class, &rendered, &block_sha)?;
