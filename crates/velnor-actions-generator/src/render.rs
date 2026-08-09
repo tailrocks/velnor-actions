@@ -933,22 +933,18 @@ fn render_cache_proof_jobs(
         b.blank();
     }
 
-    b.line(2, "cache_publish:");
-    b.line(4, "name: sole cache publisher");
+    b.line(2, "proof_reconcile:");
+    b.line(4, "name: reconcile every proof artifact");
     b.line(4, "needs:");
     b.line(6, "- validate-request");
-    b.line(6, "- restore_barrier");
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
-    b.line(4, "if: ${{ (inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled') }}");
+    b.line(4, "if: ${{ always() && (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 20");
+    b.line(4, "outputs:");
+    b.line(6, "contract: ${{ steps.reconcile.outputs.contract }}");
     b.line(4, "steps:");
-    b.line(6, "- name: Check out repository");
-    b.line(
-        8,
-        &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
-    );
     b.line(6, "- name: Download every lane and slot post-state");
     b.line(
         8,
@@ -961,6 +957,7 @@ fn render_cache_proof_jobs(
     b.line(10, "path: .velnor-proof/publish");
     b.line(10, "merge-multiple: false");
     b.line(6, "- name: Verify exact post-state set and lane equality");
+    b.line(8, "id: reconcile");
     b.line(8, "shell: bash");
     b.line(8, "env:");
     b.line(10, "RUN_ID: ${{ github.run_id }}");
@@ -973,6 +970,38 @@ fn render_cache_proof_jobs(
         "EXPECTED_CORRELATION: ${{ needs.validate-request.outputs.correlation }}",
     );
     b.run_block(8, &publisher_verify_script(&declarations));
+    b.blank();
+
+    b.line(2, "cache_publish:");
+    b.line(4, "name: sole cache publisher");
+    b.line(4, "needs:");
+    b.line(6, "- validate-request");
+    b.line(6, "- proof_reconcile");
+    b.line(4, "if: ${{ always() && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
+    b.line(4, "runs-on: ubuntu-latest");
+    b.line(4, "timeout-minutes: 20");
+    b.line(4, "steps:");
+    b.line(6, "- name: Check out repository");
+    b.line(
+        8,
+        &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
+    );
+    b.line(
+        6,
+        "- name: Download reconciled deterministic publisher source",
+    );
+    b.line(
+        8,
+        &format!(
+            "uses: actions/download-artifact@{DOWNLOAD_ARTIFACT_REF} # {DOWNLOAD_ARTIFACT_VERSION}"
+        ),
+    );
+    b.line(8, "with:");
+    b.line(10, "name: proof-post-github-${{ github.run_id }}-0");
+    b.line(
+        10,
+        "path: .velnor-proof/publish/proof-post-github-${{ github.run_id }}-0",
+    );
     for cache in &declarations {
         let id = cache.id.as_str();
         let selected = format!(
@@ -1003,6 +1032,7 @@ fn render_cache_proof_jobs(
     b.line(6, "- restore_barrier");
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
+    b.line(6, "- proof_reconcile");
     b.line(6, "- cache_publish");
     b.line(
         4,
@@ -1023,6 +1053,7 @@ fn render_cache_proof_jobs(
         "RESTORE_BARRIER",
         "GITHUB_EXECUTE",
         "VELNOR_EXECUTE",
+        "PROOF_RECONCILE",
         "CACHE_PUBLISH",
     ] {
         let job = name.to_ascii_lowercase();
@@ -1207,6 +1238,7 @@ fn publisher_verify_script(declarations: &[&CacheDeclaration]) -> String {
             "for ((slot=0; slot<FANOUT; slot++)); do\n  github_artifact=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-${{slot}}\"\n  velnor_artifact=\".velnor-proof/publish/proof-post-velnor-${{RUN_ID}}-${{slot}}\"\n  github=\"${{github_artifact}}/post/github/{id}\"\n  velnor=\"${{velnor_artifact}}/post/velnor/{id}\"\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{velnor}}/archive.sha256\")\" ]]\n  [[ \"$(cat \"${{github}}/manifest.sha256\")\" == \"$(cat \"${{velnor}}/manifest.sha256\")\" ]]\n  github_metrics=\"${{github_artifact}}/metrics/github-${{slot}}.json\"\n  velnor_metrics=\"${{velnor_artifact}}/metrics/velnor-${{slot}}.json\"\n  for metrics in \"${{github_metrics}}\" \"${{velnor_metrics}}\"; do\n    [[ -f \"${{metrics}}\" && ! -L \"${{metrics}}\" ]]\n    jq -e --arg correlation \"${{EXPECTED_CORRELATION}}\" '.schema == 1 and .correlation == $correlation and (.output_digest|test(\"^[0-9a-f]{{64}}$\"))' \"${{metrics}}\" >/dev/null\n  done\n  [[ \"$(jq -r .output_digest \"${{github_metrics}}\")\" == \"$(jq -r .output_digest \"${{velnor_metrics}}\")\" ]]\n  if (( slot > 0 )); then\n    baseline=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/post/github/{id}\"\n    baseline_metrics=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/metrics/github-0.json\"\n    [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{baseline}}/archive.sha256\")\" ]]\n    [[ \"$(jq -r .output_digest \"${{github_metrics}}\")\" == \"$(jq -r .output_digest \"${{baseline_metrics}}\")\" ]]\n  fi\ndone\n"
         ));
     }
+    script.push_str("printf 'contract=success\\n' >> \"${GITHUB_OUTPUT}\"\n");
     script
 }
 
@@ -1345,7 +1377,7 @@ jq -e --arg digest "${EXPECTED_RECORD_DIGEST}" --arg materialization "${expected
 
 /// Fail-closed final truth table for the cache proof DAG.
 pub const PROOF_CONTRACT_SCRIPT: &str = r#"set -euo pipefail
-for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GITHUB_EXECUTE}" "${VELNOR_EXECUTE}"; do
+for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GITHUB_EXECUTE}" "${VELNOR_EXECUTE}" "${PROOF_RECONCILE}"; do
   [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
 done
 publish_expected=false

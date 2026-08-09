@@ -463,6 +463,7 @@ fn run_proof_contract(overrides: &[(&str, &str)]) -> bool {
         "RESTORE_BARRIER",
         "GITHUB_EXECUTE",
         "VELNOR_EXECUTE",
+        "PROOF_RECONCILE",
     ] {
         command.env(key, "success");
     }
