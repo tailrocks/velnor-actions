@@ -173,6 +173,7 @@ fn tap_platform_gate_is_required_on_macos_independent_of_lane() {
 }
 
 fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
+    use sha2::{Digest, Sha256};
     let output = common::temp_dir("request-validator").join("github-output");
     let mut command = std::process::Command::new("bash");
     command.arg("-c").arg(render::VALIDATE_REQUEST_SCRIPT);
@@ -205,6 +206,12 @@ fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
     ] {
         command.env(key, value);
     }
+    command.env(
+        "EXPECTED_CALLER_TEMPLATE_SHA256",
+        hex::encode(Sha256::digest(
+            render::consumer_template(RepositoryClass::Code).as_bytes(),
+        )),
+    );
     for (key, value) in overrides {
         command.env(key, value);
     }
@@ -251,13 +258,23 @@ fn fake_recovery_gh() -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let root = common::temp_dir("fake-recovery-gh");
     let executable = root.join("gh");
+    let workflow = render::render_consumer(
+        &render::consumer_template(RepositoryClass::Code),
+        DUMMY_SHA,
+        "2026.7.0",
+    )
+    .unwrap();
+    std::fs::write(root.join("workflow.yml"), workflow).unwrap();
     std::fs::write(
         &executable,
         r#"#!/usr/bin/env bash
 set -euo pipefail
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 url=""
+raw=false
 for argument in "$@"; do
   [[ "${argument}" == repos/* ]] && url="${argument}"
+  [[ "${argument}" == 'Accept: application/vnd.github.raw+json' ]] && raw=true
 done
 if [[ "${url}" == *'/pulls?'* ]]; then
   if [[ "${FAKE_PR_COUNT-1}" == 1 ]]; then printf '[[{"head":{"sha":"__HEAD__"}}],[]]\n'; else printf '[[],[]]\n'; fi
@@ -265,7 +282,16 @@ elif [[ "${url}" == *'/actions/runs/123' ]]; then printf '%s\n' "${FAKE_RUN_MATC
 elif [[ "${url}" == *'/actions/runs?'* ]]; then
   if [[ "${FAKE_DUPLICATE_COUNT-1}" == 1 ]]; then printf '[{"workflow_runs":[{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"}]},{"workflow_runs":[]}]\n'; else printf '[{"workflow_runs":[{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"},{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"}]}]\n'; fi
 elif [[ "${url}" == *'/git/ref/tags/2026.7.0' ]]; then printf '%s\t%s\n' "${FAKE_TAG_TYPE-commit}" "${FAKE_TAG_SHA-__HEAD__}"
-elif [[ "${url}" == *'/contents/.github/workflows/ci.yml?'* ]]; then printf '%s\n' "${FAKE_BLOB-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+elif [[ "${url}" == *'/contents/.github/workflows/ci.yml?'* ]]; then
+  if ${raw}; then
+    cat "${script_dir}/workflow.yml"
+    [[ -z "${FAKE_WORKFLOW_SUFFIX-}" ]] || printf '%s' "${FAKE_WORKFLOW_SUFFIX}"
+  elif [[ -n "${FAKE_BLOB-}" ]]; then
+    printf '%s\n' "${FAKE_BLOB}"
+  else
+    suffix="${FAKE_WORKFLOW_SUFFIX-}"; size="$(wc -c < "${script_dir}/workflow.yml" | tr -d ' ')"; size=$((size + ${#suffix}))
+    { printf 'blob %s\0' "${size}"; cat "${script_dir}/workflow.yml"; printf '%s' "${suffix}"; } | sha1sum | cut -d' ' -f1
+  fi
 else exit 64
 fi
 "#.replace("__HEAD__", DUMMY_SHA),
@@ -336,6 +362,9 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
     let mut bad_blob = common.to_vec();
     bad_blob.push(("FAKE_BLOB", "not-a-git-blob"));
     assert!(!run_request_validator(&bad_blob));
+    let mut spoofed_generated_blob = common.to_vec();
+    spoofed_generated_blob.push(("FAKE_WORKFLOW_SUFFIX", "# attacker-controlled valid blob\n"));
+    assert!(!run_request_validator(&spoofed_generated_blob));
 }
 
 #[test]

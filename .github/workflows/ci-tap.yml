@@ -113,6 +113,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          EXPECTED_CALLER_TEMPLATE_SHA256: 0a645543a6e3aefa71818c8d7fc8875990c58e1a8fdc62bcfa485fc8b61e4328
           DECLARED_CACHE_IDS: tools
         run: |
           set -euo pipefail
@@ -131,8 +132,27 @@ jobs:
               IFS=$'\t' read -r tag_type tag_sha <<<"${tag_row}"
             fi
             [[ "${tag_type}" == commit && "${tag_sha}" == "${HEAD_SHA}" ]] || fail "protected tag does not resolve exactly to dispatched commit"
-            workflow_blob="$(gh api "repos/${REPOSITORY}/contents/.github/workflows/ci.yml?ref=${HEAD_SHA}" --jq .sha)"
+            workflow_endpoint="repos/${REPOSITORY}/contents/.github/workflows/ci.yml?ref=${HEAD_SHA}"
+            workflow_blob="$(gh api "${workflow_endpoint}" --jq .sha)"
             [[ "${workflow_blob}" =~ ^[0-9a-f]{40}$ ]] || fail "generated workflow blob is not Git-bound"
+            workflow_file="$(mktemp)"; normalized_file="$(mktemp)"
+            trap 'rm -f -- "${workflow_file-}" "${normalized_file-}"' EXIT
+            gh api -H 'Accept: application/vnd.github.raw+json' "${workflow_endpoint}" > "${workflow_file}"
+            byte_count="$(wc -c < "${workflow_file}" | tr -d ' ')"
+            computed_blob="$({ printf 'blob %s\0' "${byte_count}"; cat "${workflow_file}"; } | sha1sum | cut -d' ' -f1)"
+            [[ "${computed_blob}" == "${workflow_blob}" ]] || fail "workflow bytes do not match Git blob identity"
+            mapfile -t pin_rows < <(sed -nE 's~^    uses: (jackin-project|tailrocks|ChainArgos)/velnor-actions/\.github/workflows/ci-[a-z-]+\.yml@([0-9a-f]{40}) # (20[0-9]{2}\.[0-9]+\.[0-9]+)$~\1\t\2\t\3~p' "${workflow_file}")
+            [[ "${#pin_rows[@]}" == 3 ]] || fail "caller does not contain exactly three generated owner pins"
+            owners="$(printf '%s\n' "${pin_rows[@]}" | cut -f1 | LC_ALL=C sort -u | paste -sd, -)"
+            [[ "${owners}" == 'ChainArgos,jackin-project,tailrocks' ]] || fail "caller owner pin set mismatch"
+            fleet_sha="$(printf '%s\n' "${pin_rows[@]}" | cut -f2 | sort -u)"
+            fleet_calver="$(printf '%s\n' "${pin_rows[@]}" | cut -f3 | sort -u)"
+            [[ "${fleet_sha}" =~ ^[0-9a-f]{40}$ && "${fleet_calver}" =~ ^20[0-9]{2}\.[0-9]+\.[0-9]+$ ]] || fail "caller release pin mismatch"
+            [[ "$(printf '%s\n' "${pin_rows[@]}" | cut -f2 | sort -u | wc -l | tr -d ' ')" == 1 && "$(printf '%s\n' "${pin_rows[@]}" | cut -f3 | sort -u | wc -l | tr -d ' ')" == 1 ]] || fail "caller uses mixed release pins"
+            sed "s/@${fleet_sha} # ${fleet_calver}/@@FLEET_SHA@ # @CALVER@/g" "${workflow_file}" > "${normalized_file}"
+            [[ "$(grep -Fc '@@FLEET_SHA@ # @CALVER@' "${normalized_file}")" == 3 ]] || fail "caller normalization count mismatch"
+            normalized_sha256="$(sha256sum "${normalized_file}" | cut -d' ' -f1)"
+            [[ "${EXPECTED_CALLER_TEMPLATE_SHA256}" =~ ^[0-9a-f]{64}$ && "${normalized_sha256}" == "${EXPECTED_CALLER_TEMPLATE_SHA256}" ]] || fail "caller is not the exact generated class template"
           }
 
           correlation="ordinary"
