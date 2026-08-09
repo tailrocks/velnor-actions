@@ -506,6 +506,12 @@ sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
 printf 'false\n' > evidence/hit
 printf 'tools\n' > evidence/cache-id
 printf 'github\n' > evidence/lane
+printf '12\n' > evidence/restore-ms
+size="$(stat -c '%s' evidence/cache.tar 2>/dev/null || stat -f '%z' evidence/cache.tar)"; printf '%s\n' "${{size}}" > evidence/cache-bytes
+printf '1\n' > evidence/cache-files
+printf 'miss\n' > evidence/hit-source
+printf '%s\n' '-1' > evidence/age-seconds
+printf 'unknown\n' > evidence/eviction-risk
 {tamper}
 {verifier}
 verify_evidence evidence github tools
@@ -630,5 +636,46 @@ fn reservation_grant_is_bound_to_record_slot_and_peak() {
     assert!(!run_reservation_grant(
         &grant.replace("\"reserved_bytes\":9000", "\"reserved_bytes\":1"),
         3
+    ));
+}
+
+fn run_metrics_validator(json: &str, correlation: &str) -> bool {
+    let root = common::temp_dir("metrics-validator");
+    let metrics = root.join("metrics.json");
+    std::fs::write(&metrics, json).unwrap();
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::METRICS_VALIDATE_SCRIPT)
+        .env("METRICS_FILE", metrics)
+        .env("EXPECTED_METRICS_LANE", "github")
+        .env("EXPECTED_METRICS_SLOT", "3")
+        .env("EXPECTED_METRICS_CORRELATION", correlation)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn metrics_schema_enforces_units_boundaries_redaction_and_correlation() {
+    let valid = format!(
+        r#"{{"schema":1,"lane":"github","slot":3,"required_step_start_ms":1000,"required_step_end_ms":1250,"required_steps_ms":250,"cpu_ms":120,"peak_memory_bytes":4096,"disk_bytes":8192,"cache_restore_ms":20,"cache_save_ms":0,"cache_copy_ms":4,"cache_lock_wait_ms":0,"disk_latency_ms":2,"psi":{{"cpu":"some avg10=0.00 total=1","io":"some avg10=0.00 total=2","memory":"some avg10=0.00 total=3"}},"cache_result":"exact","cache_bytes":1024,"cache_files":4,"output_digest":"{DIGEST_A}","correlation":"campaign-0001:wave-0001"}}"#
+    );
+    assert!(run_metrics_validator(&valid, "campaign-0001:wave-0001"));
+    assert!(!run_metrics_validator(&valid, "other-correlation"));
+    assert!(!run_metrics_validator(
+        &valid.replace("\"required_steps_ms\":250", "\"required_steps_ms\":249"),
+        "campaign-0001:wave-0001"
+    ));
+    assert!(!run_metrics_validator(
+        &valid.replace("\"cpu_ms\":120", "\"cpu_ms\":1.5"),
+        "campaign-0001:wave-0001"
+    ));
+    assert!(!run_metrics_validator(
+        &valid.replace("some avg10=0.00 total=1", "secret-token-value"),
+        "campaign-0001:wave-0001"
+    ));
+    assert!(!run_metrics_validator(
+        &valid.replace(&format!(",\"output_digest\":\"{DIGEST_A}\""), ""),
+        "campaign-0001:wave-0001"
     ));
 }

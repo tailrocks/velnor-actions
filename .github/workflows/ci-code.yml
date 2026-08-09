@@ -688,6 +688,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
+      - name: Start tools restore boundary
+        id: restore-start-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore tools without saving
         id: restore-tools
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -697,11 +703,19 @@ jobs:
             .cache/mise
             .local/share/mise/installs
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+      - name: Record tools restore boundary
+        id: restore-timing-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable tools restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-tools.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -723,6 +737,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -741,6 +764,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
+      - name: Start dependencies restore boundary
+        id: restore-start-dependencies
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore dependencies without saving
         id: restore-dependencies
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'dependencies' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -752,11 +781,19 @@ jobs:
             .gradle/caches
             **/node_modules
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+      - name: Record dependencies restore boundary
+        id: restore-timing-dependencies
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable dependencies restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-dependencies.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-dependencies.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -778,6 +815,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -796,6 +842,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
+      - name: Start build-output restore boundary
+        id: restore-start-build-output
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore build-output without saving
         id: restore-build-output
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'build-output' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -805,11 +857,19 @@ jobs:
             target
             **/target
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      - name: Record build-output restore boundary
+        id: restore-timing-build-output
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable build-output restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-build-output.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-build-output.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -831,6 +891,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -916,6 +985,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
+      - name: Start tools restore boundary
+        id: restore-start-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore tools without saving
         id: restore-tools
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -925,11 +1000,19 @@ jobs:
             .cache/mise
             .local/share/mise/installs
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+      - name: Record tools restore boundary
+        id: restore-timing-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable tools restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-tools.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-tools.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -951,6 +1034,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -1024,6 +1116,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
+      - name: Start dependencies restore boundary
+        id: restore-start-dependencies
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore dependencies without saving
         id: restore-dependencies
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'dependencies' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -1035,11 +1133,19 @@ jobs:
             .gradle/caches
             **/node_modules
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+      - name: Record dependencies restore boundary
+        id: restore-timing-dependencies
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable dependencies restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-dependencies.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-dependencies.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -1061,6 +1167,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -1134,6 +1249,12 @@ jobs:
           set -euo pipefail
           shopt -s globstar nullglob
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
+      - name: Start build-output restore boundary
+        id: restore-start-build-output
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore build-output without saving
         id: restore-build-output
         if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'build-output' || inputs.benchmark_cache_mode != 'disabled') }}
@@ -1143,11 +1264,19 @@ jobs:
             target
             **/target
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      - name: Record build-output restore boundary
+        id: restore-timing-build-output
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
+        shell: bash
+        run: |
+          awk '{printf "restore_finished_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Package immutable build-output restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
+          RESTORE_STARTED_MS: ${{ steps.restore-start-build-output.outputs.monotonic_ms }}
+          RESTORE_FINISHED_MS: ${{ steps.restore-timing-build-output.outputs.restore_finished_ms }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -1169,6 +1298,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -1236,11 +1374,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1373,6 +1517,7 @@ jobs:
   github_execute:
     name: github execute proof (${{ matrix.slot }})
     needs:
+      - validate-request
       - restore_barrier
       - reservation_barrier
       - github_restore
@@ -1400,11 +1545,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1434,7 +1585,10 @@ jobs:
           }
           root='.velnor-proof/execute/github/tools'
           verify_evidence "${root}" 'github' 'tools'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'github:tools:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download github dependencies restore artifact
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1449,11 +1603,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1483,7 +1643,10 @@ jobs:
           }
           root='.velnor-proof/execute/github/dependencies'
           verify_evidence "${root}" 'github' 'dependencies'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'github:dependencies:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download github build-output restore artifact
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1498,11 +1661,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1532,8 +1701,23 @@ jobs:
           }
           root='.velnor-proof/execute/github/build-output'
           verify_evidence "${root}" 'github' 'build-output'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'github:build-output:${{ matrix.slot }}' > "${root}/materialization-id"
+      - name: Record portable required-step start
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .velnor-proof/runtime
+          [[ -r /proc/uptime && -r /sys/fs/cgroup/cpu.stat && -r /sys/fs/cgroup/memory.peak && -r /sys/fs/cgroup/io.pressure ]]
+          monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+          cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+          io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+          for value in "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          printf 'START_MONOTONIC_MS=%s\nSTART_CPU_USEC=%s\nSTART_IO_TOTAL_USEC=%s\n' \
+            "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}" > .velnor-proof/runtime/start.env
       - name: Set up mise toolchain
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
@@ -1566,19 +1750,76 @@ jobs:
         env:
           PROOF_LANE: github
           PROOF_SLOT: ${{ matrix.slot }}
-          PROOF_CORRELATION: ${{ needs.restore_barrier.result }}:${{ inputs.benchmark_campaign }}:${{ inputs.cache_proof_id }}
+          PROOF_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
         run: |
           set -euo pipefail
-          mkdir -p .velnor-proof/metrics
-          cpu_ms="$(awk '{printf "%d", ($14+$15)*1000/100}' /proc/self/stat 2>/dev/null || printf '0')"
-          peak_kib="$(awk '/VmHWM:/ {print $2}' /proc/self/status 2>/dev/null || printf '0')"
-          disk_bytes="$(du -sb . 2>/dev/null | awk '{print $1}' || printf '0')"
-          psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu 2>/dev/null || true)"
-          for value in "${cpu_ms}" "${peak_kib}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          source .velnor-proof/runtime/start.env
+          for value in "${START_MONOTONIC_MS}" "${START_CPU_USEC}" "${START_IO_TOTAL_USEC}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          end_monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+          end_cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+          end_io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+          peak_memory_bytes="$(cat /sys/fs/cgroup/memory.peak)"
+          disk_bytes="$(du -sb . | awk '{print $1}')"
+          for value in "${end_monotonic_ms}" "${end_cpu_usec}" "${end_io_total_usec}" "${peak_memory_bytes}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
+          required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
+          cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
+          disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+          cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
+          : > .velnor-proof/runtime/hit-sources
+          shopt -s nullglob
+          evidence=(.velnor-proof/execute/${PROOF_LANE}/*)
+          (( ${#evidence[@]} > 0 ))
+          for root in "${evidence[@]}"; do
+            for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+            restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+            bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
+            for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+            cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+            cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
+            cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
+          done
+          cache_result="$(LC_ALL=C sort -u .velnor-proof/runtime/hit-sources | paste -sd, -)"
+          [[ "${cache_result}" =~ ^(exact|miss|exact,miss)$ ]]
+          : > .velnor-proof/runtime/output-manifest
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* ]]
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file#./}" | openssl base64 -A)"
+            printf '%s %s\n' "${digest}" "${encoded}"
+          done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
+          output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
           correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
-          printf '{"schema":1,"lane":"%s","slot":%s,"cpu_ms":%s,"peak_memory_kib":%s,"disk_bytes":%s,"cache_restore_ms":0,"cache_save_ms":0,"cache_copy_ms":0,"cache_lock_wait_ms":0,"disk_latency_ms":0,"psi_cpu":"%s","cache_result":"proof","cache_bytes":%s,"cache_files":0,"output_digest":"pending","correlation":"%s"}\n' \
-            "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
+          [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
+          psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
+          mkdir -p .velnor-proof/metrics
+          jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
+            --argjson required_steps_ms "${required_steps_ms}" --argjson cpu_ms "${cpu_ms}" \
+            --argjson required_step_start_ms "${START_MONOTONIC_MS}" --argjson required_step_end_ms "${end_monotonic_ms}" \
+            --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
+            --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
+            --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+            --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
+            --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
+            --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
+            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+          export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+          export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
+
+          set -euo pipefail
+          [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
+          jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
+            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+            .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
+            (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
+            (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
+            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+            .required_step_end_ms >= .required_step_start_ms and
+            .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
+            ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
+          ' "${METRICS_FILE}" >/dev/null
       - name: Package github tools post-state
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
@@ -1605,6 +1846,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -1634,6 +1884,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -1663,6 +1922,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
@@ -1682,6 +1950,7 @@ jobs:
   velnor_execute:
     name: velnor execute proof (${{ matrix.slot }})
     needs:
+      - validate-request
       - restore_barrier
       - reservation_barrier
       - github_restore
@@ -1732,11 +2001,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1766,7 +2041,10 @@ jobs:
           }
           root='.velnor-proof/execute/velnor/tools'
           verify_evidence "${root}" 'velnor' 'tools'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'velnor:tools:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download velnor dependencies restore artifact
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1781,11 +2059,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1815,7 +2099,10 @@ jobs:
           }
           root='.velnor-proof/execute/velnor/dependencies'
           verify_evidence "${root}" 'velnor' 'dependencies'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'velnor:dependencies:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download velnor build-output restore artifact
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1830,11 +2117,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1864,8 +2157,23 @@ jobs:
           }
           root='.velnor-proof/execute/velnor/build-output'
           verify_evidence "${root}" 'velnor' 'build-output'
+          copy_started=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
           tar -xf "${root}/cache.tar" -C .
+          copy_finished=$(awk '{printf "%d", $1 * 1000}' /proc/uptime)
+          printf '%s\n' "$((copy_finished - copy_started))" > "${root}/copy-ms"
           printf '%s\n' 'velnor:build-output:${{ matrix.slot }}' > "${root}/materialization-id"
+      - name: Record portable required-step start
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .velnor-proof/runtime
+          [[ -r /proc/uptime && -r /sys/fs/cgroup/cpu.stat && -r /sys/fs/cgroup/memory.peak && -r /sys/fs/cgroup/io.pressure ]]
+          monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+          cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+          io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+          for value in "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          printf 'START_MONOTONIC_MS=%s\nSTART_CPU_USEC=%s\nSTART_IO_TOTAL_USEC=%s\n' \
+            "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}" > .velnor-proof/runtime/start.env
       - name: Set up mise toolchain
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
@@ -1898,19 +2206,76 @@ jobs:
         env:
           PROOF_LANE: velnor
           PROOF_SLOT: ${{ matrix.slot }}
-          PROOF_CORRELATION: ${{ needs.restore_barrier.result }}:${{ inputs.benchmark_campaign }}:${{ inputs.cache_proof_id }}
+          PROOF_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
         run: |
           set -euo pipefail
-          mkdir -p .velnor-proof/metrics
-          cpu_ms="$(awk '{printf "%d", ($14+$15)*1000/100}' /proc/self/stat 2>/dev/null || printf '0')"
-          peak_kib="$(awk '/VmHWM:/ {print $2}' /proc/self/status 2>/dev/null || printf '0')"
-          disk_bytes="$(du -sb . 2>/dev/null | awk '{print $1}' || printf '0')"
-          psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu 2>/dev/null || true)"
-          for value in "${cpu_ms}" "${peak_kib}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          source .velnor-proof/runtime/start.env
+          for value in "${START_MONOTONIC_MS}" "${START_CPU_USEC}" "${START_IO_TOTAL_USEC}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          end_monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+          end_cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+          end_io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+          peak_memory_bytes="$(cat /sys/fs/cgroup/memory.peak)"
+          disk_bytes="$(du -sb . | awk '{print $1}')"
+          for value in "${end_monotonic_ms}" "${end_cpu_usec}" "${end_io_total_usec}" "${peak_memory_bytes}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
+          required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
+          cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
+          disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+          cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
+          : > .velnor-proof/runtime/hit-sources
+          shopt -s nullglob
+          evidence=(.velnor-proof/execute/${PROOF_LANE}/*)
+          (( ${#evidence[@]} > 0 ))
+          for root in "${evidence[@]}"; do
+            for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+            restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+            bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
+            for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+            cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+            cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
+            cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
+          done
+          cache_result="$(LC_ALL=C sort -u .velnor-proof/runtime/hit-sources | paste -sd, -)"
+          [[ "${cache_result}" =~ ^(exact|miss|exact,miss)$ ]]
+          : > .velnor-proof/runtime/output-manifest
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* ]]
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file#./}" | openssl base64 -A)"
+            printf '%s %s\n' "${digest}" "${encoded}"
+          done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
+          output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
           correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
-          printf '{"schema":1,"lane":"%s","slot":%s,"cpu_ms":%s,"peak_memory_kib":%s,"disk_bytes":%s,"cache_restore_ms":0,"cache_save_ms":0,"cache_copy_ms":0,"cache_lock_wait_ms":0,"disk_latency_ms":0,"psi_cpu":"%s","cache_result":"proof","cache_bytes":%s,"cache_files":0,"output_digest":"pending","correlation":"%s"}\n' \
-            "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
+          [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
+          psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
+          mkdir -p .velnor-proof/metrics
+          jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
+            --argjson required_steps_ms "${required_steps_ms}" --argjson cpu_ms "${cpu_ms}" \
+            --argjson required_step_start_ms "${START_MONOTONIC_MS}" --argjson required_step_end_ms "${end_monotonic_ms}" \
+            --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
+            --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
+            --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+            --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
+            --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
+            --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
+            '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+          export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+          export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
+
+          set -euo pipefail
+          [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
+          jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
+            keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+            .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
+            (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
+            (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
+            ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+            .required_step_end_ms >= .required_step_start_ms and
+            .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
+            ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
+          ' "${METRICS_FILE}" >/dev/null
       - name: Package velnor tools post-state
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
@@ -1937,6 +2302,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -1966,6 +2340,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -1995,6 +2378,15 @@ jobs:
           tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
           sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
@@ -2014,6 +2406,7 @@ jobs:
   cache_publish:
     name: sole cache publisher
     needs:
+      - validate-request
       - restore_barrier
       - github_execute
       - velnor_execute
@@ -2034,15 +2427,22 @@ jobs:
         env:
           RUN_ID: ${{ github.run_id }}
           FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}
+          EXPECTED_CORRELATION: ${{ needs.validate-request.outputs.correlation }}
         run: |
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -2075,39 +2475,72 @@ jobs:
           actual=$(find .velnor-proof/publish -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
           [[ "${actual}" == "${expected}" ]]
           for ((slot=0; slot<FANOUT; slot++)); do
-            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/tools"
-            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/tools"
+            github_artifact=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}"
+            velnor_artifact=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}"
+            github="${github_artifact}/post/github/tools"
+            velnor="${velnor_artifact}/post/velnor/tools"
             verify_evidence "${github}" github 'tools'
             verify_evidence "${velnor}" velnor 'tools'
             [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
             [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            github_metrics="${github_artifact}/metrics/github-${slot}.json"
+            velnor_metrics="${velnor_artifact}/metrics/velnor-${slot}.json"
+            for metrics in "${github_metrics}" "${velnor_metrics}"; do
+              [[ -f "${metrics}" && ! -L "${metrics}" ]]
+              jq -e --arg correlation "${EXPECTED_CORRELATION}" '.schema == 1 and .correlation == $correlation and (.output_digest|test("^[0-9a-f]{64}$"))' "${metrics}" >/dev/null
+            done
+            [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${velnor_metrics}")" ]]
             if (( slot > 0 )); then
               baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/tools"
+              baseline_metrics=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/metrics/github-0.json"
               [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+              [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${baseline_metrics}")" ]]
             fi
           done
           for ((slot=0; slot<FANOUT; slot++)); do
-            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/dependencies"
-            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/dependencies"
+            github_artifact=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}"
+            velnor_artifact=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}"
+            github="${github_artifact}/post/github/dependencies"
+            velnor="${velnor_artifact}/post/velnor/dependencies"
             verify_evidence "${github}" github 'dependencies'
             verify_evidence "${velnor}" velnor 'dependencies'
             [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
             [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            github_metrics="${github_artifact}/metrics/github-${slot}.json"
+            velnor_metrics="${velnor_artifact}/metrics/velnor-${slot}.json"
+            for metrics in "${github_metrics}" "${velnor_metrics}"; do
+              [[ -f "${metrics}" && ! -L "${metrics}" ]]
+              jq -e --arg correlation "${EXPECTED_CORRELATION}" '.schema == 1 and .correlation == $correlation and (.output_digest|test("^[0-9a-f]{64}$"))' "${metrics}" >/dev/null
+            done
+            [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${velnor_metrics}")" ]]
             if (( slot > 0 )); then
               baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/dependencies"
+              baseline_metrics=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/metrics/github-0.json"
               [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+              [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${baseline_metrics}")" ]]
             fi
           done
           for ((slot=0; slot<FANOUT; slot++)); do
-            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/build-output"
-            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/build-output"
+            github_artifact=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}"
+            velnor_artifact=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}"
+            github="${github_artifact}/post/github/build-output"
+            velnor="${velnor_artifact}/post/velnor/build-output"
             verify_evidence "${github}" github 'build-output'
             verify_evidence "${velnor}" velnor 'build-output'
             [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
             [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            github_metrics="${github_artifact}/metrics/github-${slot}.json"
+            velnor_metrics="${velnor_artifact}/metrics/velnor-${slot}.json"
+            for metrics in "${github_metrics}" "${velnor_metrics}"; do
+              [[ -f "${metrics}" && ! -L "${metrics}" ]]
+              jq -e --arg correlation "${EXPECTED_CORRELATION}" '.schema == 1 and .correlation == $correlation and (.output_digest|test("^[0-9a-f]{64}$"))' "${metrics}" >/dev/null
+            done
+            [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${velnor_metrics}")" ]]
             if (( slot > 0 )); then
               baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/build-output"
+              baseline_metrics=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/metrics/github-0.json"
               [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+              [[ "$(jq -r .output_digest "${github_metrics}")" == "$(jq -r .output_digest "${baseline_metrics}")" ]]
             fi
           done
       - name: Materialize deterministic tools post-state
@@ -2117,11 +2550,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -2167,11 +2606,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -2219,11 +2664,17 @@ jobs:
           set -euo pipefail
           verify_evidence() {
             local root="$1" expected_lane="$2" expected_id="$3" required
-            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
               [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
             done
             [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
             [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+            [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+            [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+            [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
             [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
             [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
             local scratch="${root}.verified" mode digest encoded extra path actual_mode

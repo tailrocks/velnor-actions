@@ -654,6 +654,14 @@ fn render_cache_proof_jobs(
             b.line(8, &format!("if: {selected}"));
             b.line(8, "shell: bash");
             b.run_block(8, &clean_cache_script(cache));
+            b.line(6, &format!("- name: Start {id} restore boundary"));
+            b.line(8, &format!("id: restore-start-{id}"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.run_block(
+                8,
+                "awk '{printf \"monotonic_ms=%d\\n\", $1 * 1000}' /proc/uptime >> \"${GITHUB_OUTPUT}\"",
+            );
             b.line(6, &format!("- name: Restore {id} without saving"));
             b.line(8, &format!("id: restore-{id}"));
             b.line(8, &format!("if: {restore_selected}"));
@@ -662,6 +670,14 @@ fn render_cache_proof_jobs(
                 &format!("uses: actions/cache/restore@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
             );
             cache_action_with(b, contract.class, cache, false);
+            b.line(6, &format!("- name: Record {id} restore boundary"));
+            b.line(8, &format!("id: restore-timing-{id}"));
+            b.line(8, &format!("if: {selected}"));
+            b.line(8, "shell: bash");
+            b.run_block(
+                8,
+                "awk '{printf \"restore_finished_ms=%d\\n\", $1 * 1000}' /proc/uptime >> \"${GITHUB_OUTPUT}\"",
+            );
             b.line(
                 6,
                 &format!("- name: Package immutable {id} restore evidence"),
@@ -672,6 +688,16 @@ fn render_cache_proof_jobs(
             b.line(
                 10,
                 &format!("CACHE_HIT: ${{{{ steps.restore-{id}.outputs.cache-hit }}}}"),
+            );
+            b.line(
+                10,
+                &format!(
+                    "RESTORE_STARTED_MS: ${{{{ steps.restore-start-{id}.outputs.monotonic_ms }}}}"
+                ),
+            );
+            b.line(
+                10,
+                &format!("RESTORE_FINISHED_MS: ${{{{ steps.restore-timing-{id}.outputs.restore_finished_ms }}}}"),
             );
             b.run_block(8, &package_cache_script(cache, lane, "restore"));
             b.line(6, &format!("- name: Upload {id} restore evidence"));
@@ -768,6 +794,7 @@ fn render_cache_proof_jobs(
             &format!("name: {lane} execute proof (${{{{ matrix.slot }}}})"),
         );
         b.line(4, "needs:");
+        b.line(6, "- validate-request");
         b.line(6, "- restore_barrier");
         b.line(6, "- reservation_barrier");
         b.line(6, "- github_restore");
@@ -827,6 +854,9 @@ fn render_cache_proof_jobs(
             b.line(8, "shell: bash");
             b.run_block(8, &materialize_script(id, lane));
         }
+        b.line(6, "- name: Record portable required-step start");
+        b.line(8, "shell: bash");
+        b.run_block(8, METRICS_START_SCRIPT);
         b.line(6, "- name: Set up mise toolchain");
         b.line(
             8,
@@ -842,8 +872,11 @@ fn render_cache_proof_jobs(
         b.line(8, "env:");
         b.line(10, &format!("PROOF_LANE: {lane}"));
         b.line(10, "PROOF_SLOT: ${{ matrix.slot }}");
-        b.line(10, "PROOF_CORRELATION: ${{ needs.restore_barrier.result }}:${{ inputs.benchmark_campaign }}:${{ inputs.cache_proof_id }}");
-        b.run_block(8, METRICS_SCRIPT);
+        b.line(
+            10,
+            "PROOF_CORRELATION: ${{ needs.validate-request.outputs.correlation }}",
+        );
+        b.run_block(8, &format!("{METRICS_SCRIPT}\n{METRICS_VALIDATE_SCRIPT}"));
         for cache in &declarations {
             let id = cache.id.as_str();
             let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
@@ -880,6 +913,7 @@ fn render_cache_proof_jobs(
     b.line(2, "cache_publish:");
     b.line(4, "name: sole cache publisher");
     b.line(4, "needs:");
+    b.line(6, "- validate-request");
     b.line(6, "- restore_barrier");
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
@@ -910,6 +944,10 @@ fn render_cache_proof_jobs(
     b.line(
         10,
         "FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}",
+    );
+    b.line(
+        10,
+        "EXPECTED_CORRELATION: ${{ needs.validate-request.outputs.correlation }}",
     );
     b.run_block(8, &publisher_verify_script(&declarations));
     for cache in &declarations {
@@ -1012,6 +1050,15 @@ done < "${{destination}}/files.nul" | LC_ALL=C sort > "${{destination}}/manifest
 tar --null --files-from="${{destination}}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${{destination}}/cache.tar"
 sha256sum "${{destination}}/manifest.txt" | cut -d' ' -f1 > "${{destination}}/manifest.sha256"
 sha256sum "${{destination}}/cache.tar" | cut -d' ' -f1 > "${{destination}}/archive.sha256"
+restore_started="${{RESTORE_STARTED_MS-0}}"; restore_finished="${{RESTORE_FINISHED_MS-0}}"
+for value in "${{restore_started}}" "${{restore_finished}}"; do [[ "${{value}}" =~ ^[0-9]+$ ]]; done
+(( restore_finished >= restore_started ))
+printf '%s\n' "$((restore_finished - restore_started))" > "${{destination}}/restore-ms"
+stat -c '%s' -- "${{destination}}/cache.tar" > "${{destination}}/cache-bytes"
+wc -l < "${{destination}}/manifest.txt" | tr -d ' ' > "${{destination}}/cache-files"
+if [[ "${{CACHE_HIT}}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${{destination}}/hit-source"
+printf '%s\n' '-1' > "${{destination}}/age-seconds"
+printf '%s\n' 'unknown' > "${{destination}}/eviction-risk"
 printf '%s\n' "${{CACHE_HIT}}" > "${{destination}}/hit"
 printf '%s\n' '{id}' > "${{destination}}/cache-id"
 printf '%s\n' '{lane}' > "${{destination}}/lane""#,
@@ -1076,11 +1123,17 @@ fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
 /// Fail-closed verifier shared by every cache-evidence boundary.
 pub const EVIDENCE_VERIFIER: &str = r#"verify_evidence() {
   local root="$1" expected_lane="$2" expected_id="$3" required
-  for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+  for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane restore-ms cache-bytes cache-files hit-source age-seconds eviction-risk; do
     [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
   done
   [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
   [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+  [[ "$(cat "${root}/restore-ms")" =~ ^[0-9]+$ ]]
+  [[ "$(cat "${root}/cache-bytes")" =~ ^[0-9]+$ ]]
+  [[ "$(cat "${root}/cache-files")" =~ ^[0-9]+$ ]]
+  [[ "$(cat "${root}/hit-source")" =~ ^(exact|miss)$ ]]
+  [[ "$(cat "${root}/age-seconds")" =~ ^-?[0-9]+$ ]]
+  [[ "$(cat "${root}/eviction-risk")" =~ ^(low|medium|high|unknown)$ ]]
   [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
   [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
   local scratch="${root}.verified" mode digest encoded extra path actual_mode
@@ -1111,7 +1164,7 @@ pub const EVIDENCE_VERIFIER: &str = r#"verify_evidence() {
 
 fn materialize_script(id: &str, lane: &str) -> String {
     format!(
-        "set -euo pipefail\n{EVIDENCE_VERIFIER}\nroot='.velnor-proof/execute/{lane}/{id}'\nverify_evidence \"${{root}}\" '{lane}' '{id}'\ntar -xf \"${{root}}/cache.tar\" -C .\nprintf '%s\\n' '{lane}:{id}:${{{{ matrix.slot }}}}' > \"${{root}}/materialization-id\""
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\nroot='.velnor-proof/execute/{lane}/{id}'\nverify_evidence \"${{root}}\" '{lane}' '{id}'\ncopy_started=$(awk '{{printf \"%d\", $1 * 1000}}' /proc/uptime)\ntar -xf \"${{root}}/cache.tar\" -C .\ncopy_finished=$(awk '{{printf \"%d\", $1 * 1000}}' /proc/uptime)\nprintf '%s\\n' \"$((copy_finished - copy_started))\" > \"${{root}}/copy-ms\"\nprintf '%s\\n' '{lane}:{id}:${{{{ matrix.slot }}}}' > \"${{root}}/materialization-id\""
     )
 }
 
@@ -1128,23 +1181,93 @@ fn publisher_verify_script(declarations: &[&CacheDeclaration]) -> String {
     for cache in declarations {
         let id = cache.id.as_str();
         script.push_str(&format!(
-            "for ((slot=0; slot<FANOUT; slot++)); do\n  github=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-${{slot}}/post/github/{id}\"\n  velnor=\".velnor-proof/publish/proof-post-velnor-${{RUN_ID}}-${{slot}}/post/velnor/{id}\"\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{velnor}}/archive.sha256\")\" ]]\n  [[ \"$(cat \"${{github}}/manifest.sha256\")\" == \"$(cat \"${{velnor}}/manifest.sha256\")\" ]]\n  if (( slot > 0 )); then\n    baseline=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/post/github/{id}\"\n    [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{baseline}}/archive.sha256\")\" ]]\n  fi\ndone\n"
+            "for ((slot=0; slot<FANOUT; slot++)); do\n  github_artifact=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-${{slot}}\"\n  velnor_artifact=\".velnor-proof/publish/proof-post-velnor-${{RUN_ID}}-${{slot}}\"\n  github=\"${{github_artifact}}/post/github/{id}\"\n  velnor=\"${{velnor_artifact}}/post/velnor/{id}\"\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{velnor}}/archive.sha256\")\" ]]\n  [[ \"$(cat \"${{github}}/manifest.sha256\")\" == \"$(cat \"${{velnor}}/manifest.sha256\")\" ]]\n  github_metrics=\"${{github_artifact}}/metrics/github-${{slot}}.json\"\n  velnor_metrics=\"${{velnor_artifact}}/metrics/velnor-${{slot}}.json\"\n  for metrics in \"${{github_metrics}}\" \"${{velnor_metrics}}\"; do\n    [[ -f \"${{metrics}}\" && ! -L \"${{metrics}}\" ]]\n    jq -e --arg correlation \"${{EXPECTED_CORRELATION}}\" '.schema == 1 and .correlation == $correlation and (.output_digest|test(\"^[0-9a-f]{{64}}$\"))' \"${{metrics}}\" >/dev/null\n  done\n  [[ \"$(jq -r .output_digest \"${{github_metrics}}\")\" == \"$(jq -r .output_digest \"${{velnor_metrics}}\")\" ]]\n  if (( slot > 0 )); then\n    baseline=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/post/github/{id}\"\n    baseline_metrics=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/metrics/github-0.json\"\n    [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{baseline}}/archive.sha256\")\" ]]\n    [[ \"$(jq -r .output_digest \"${{github_metrics}}\")\" == \"$(jq -r .output_digest \"${{baseline_metrics}}\")\" ]]\n  fi\ndone\n"
         ));
     }
     script
 }
 
+const METRICS_START_SCRIPT: &str = r#"set -euo pipefail
+mkdir -p .velnor-proof/runtime
+[[ -r /proc/uptime && -r /sys/fs/cgroup/cpu.stat && -r /sys/fs/cgroup/memory.peak && -r /sys/fs/cgroup/io.pressure ]]
+monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+for value in "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+printf 'START_MONOTONIC_MS=%s\nSTART_CPU_USEC=%s\nSTART_IO_TOTAL_USEC=%s\n' \
+  "${monotonic_ms}" "${cpu_usec}" "${io_total_usec}" > .velnor-proof/runtime/start.env
+"#;
+
 const METRICS_SCRIPT: &str = r#"set -euo pipefail
-mkdir -p .velnor-proof/metrics
-cpu_ms="$(awk '{printf "%d", ($14+$15)*1000/100}' /proc/self/stat 2>/dev/null || printf '0')"
-peak_kib="$(awk '/VmHWM:/ {print $2}' /proc/self/status 2>/dev/null || printf '0')"
-disk_bytes="$(du -sb . 2>/dev/null | awk '{print $1}' || printf '0')"
-psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu 2>/dev/null || true)"
-for value in "${cpu_ms}" "${peak_kib}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+source .velnor-proof/runtime/start.env
+for value in "${START_MONOTONIC_MS}" "${START_CPU_USEC}" "${START_IO_TOTAL_USEC}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+end_monotonic_ms="$(awk '{printf "%d", $1 * 1000}' /proc/uptime)"
+end_cpu_usec="$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat)"
+end_io_total_usec="$(awk '$1 == "some" {for (i=1;i<=NF;i++) if ($i ~ /^total=/) {split($i,a,"="); print a[2]}}' /sys/fs/cgroup/io.pressure)"
+peak_memory_bytes="$(cat /sys/fs/cgroup/memory.peak)"
+disk_bytes="$(du -sb . | awk '{print $1}')"
+for value in "${end_monotonic_ms}" "${end_cpu_usec}" "${end_io_total_usec}" "${peak_memory_bytes}" "${disk_bytes}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+(( end_monotonic_ms >= START_MONOTONIC_MS && end_cpu_usec >= START_CPU_USEC && end_io_total_usec >= START_IO_TOTAL_USEC ))
+required_steps_ms=$((end_monotonic_ms - START_MONOTONIC_MS))
+cpu_ms=$(((end_cpu_usec - START_CPU_USEC) / 1000))
+disk_latency_ms=$(((end_io_total_usec - START_IO_TOTAL_USEC) / 1000))
+cache_restore_ms=0; cache_copy_ms=0; cache_lock_wait_ms=0; cache_bytes=0; cache_files=0
+: > .velnor-proof/runtime/hit-sources
+shopt -s nullglob
+evidence=(.velnor-proof/execute/${PROOF_LANE}/*)
+(( ${#evidence[@]} > 0 ))
+for root in "${evidence[@]}"; do
+  for field in restore-ms copy-ms cache-bytes cache-files hit-source; do [[ -f "${root}/${field}" ]]; done
+  restore="$(cat "${root}/restore-ms")"; copy="$(cat "${root}/copy-ms")"
+  bytes="$(cat "${root}/cache-bytes")"; files="$(cat "${root}/cache-files")"
+  for value in "${restore}" "${copy}" "${bytes}" "${files}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+  cache_restore_ms=$((cache_restore_ms + restore)); cache_copy_ms=$((cache_copy_ms + copy))
+  cache_bytes=$((cache_bytes + bytes)); cache_files=$((cache_files + files))
+  cat "${root}/hit-source" >> .velnor-proof/runtime/hit-sources
+done
+cache_result="$(LC_ALL=C sort -u .velnor-proof/runtime/hit-sources | paste -sd, -)"
+[[ "${cache_result}" =~ ^(exact|miss|exact,miss)$ ]]
+: > .velnor-proof/runtime/output-manifest
+while IFS= read -r -d '' file; do
+  [[ "${file}" != *$'\n'* ]]
+  digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+  encoded="$(printf '%s' "${file#./}" | openssl base64 -A)"
+  printf '%s %s\n' "${digest}" "${encoded}"
+done < <(find . -path './.git' -prune -o -path './.velnor-proof' -prune -o -type f -print0) | LC_ALL=C sort > .velnor-proof/runtime/output-manifest
+output_digest="$(sha256sum .velnor-proof/runtime/output-manifest | cut -d' ' -f1)"
 correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
-printf '{"schema":1,"lane":"%s","slot":%s,"cpu_ms":%s,"peak_memory_kib":%s,"disk_bytes":%s,"cache_restore_ms":0,"cache_save_ms":0,"cache_copy_ms":0,"cache_lock_wait_ms":0,"disk_latency_ms":0,"psi_cpu":"%s","cache_result":"proof","cache_bytes":%s,"cache_files":0,"output_digest":"pending","correlation":"%s"}\n' \
-  "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
+[[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
+psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
+mkdir -p .velnor-proof/metrics
+jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
+  --argjson required_steps_ms "${required_steps_ms}" --argjson cpu_ms "${cpu_ms}" \
+  --argjson required_step_start_ms "${START_MONOTONIC_MS}" --argjson required_step_end_ms "${end_monotonic_ms}" \
+  --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
+  --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
+  --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+  --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
+  --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
+  --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
+  '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
   > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
+export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
+"#;
+
+/// Exact schema, unit, correlation, and redaction validator for emitted metrics.
+pub const METRICS_VALIDATE_SCRIPT: &str = r#"set -euo pipefail
+[[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
+jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
+  keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+  .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
+  (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
+  (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
+  (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
+  ([.required_step_start_ms,.required_step_end_ms,.required_steps_ms,.cpu_ms,.peak_memory_bytes,.disk_bytes,.cache_restore_ms,.cache_save_ms,.cache_copy_ms,.cache_lock_wait_ms,.disk_latency_ms,.cache_bytes,.cache_files] | all(.[]; type == "number" and . >= 0 and floor == .)) and
+  .required_step_end_ms >= .required_step_start_ms and
+  .required_steps_ms == (.required_step_end_ms - .required_step_start_ms) and
+  ([paths(strings) as $p | getpath($p)] | all(.[]; (test("(?i)(token|secret|password|credential|authorization|/users/|/home/|github_workspace)") | not)))
+' "${METRICS_FILE}" >/dev/null
 "#;
 
 /// Workflow side of the Plan-007 Velnor atomic reservation/barrier schema.
