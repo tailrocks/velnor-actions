@@ -7,7 +7,9 @@
 //! invariants. Any one-byte hand edit to a generated file — including a neutered
 //! composite run-script body — fails the audit.
 
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path};
+use std::process::Command;
 
 use crate::cache::CacheContract;
 use crate::composite;
@@ -16,89 +18,30 @@ use crate::render::{
     self, ACTIONS_REPO, CALVER_PLACEHOLDER, CANONICAL_OWNER, FLEET_SHA_PLACEHOLDER,
 };
 use crate::{ALL_CLASSES, RepositoryClass};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-const ADMITTED_REMOTE_ROOTS: [(&str, &str); 5] = [
-    (
-        "actions/checkout",
-        "3d3c42e5aac5ba805825da76410c181273ba90b1",
-    ),
-    (
-        "jdx/mise-action",
-        "7e36c90d9ab29c415a2384db3006f3ec8a8cc654",
-    ),
-    ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"),
-    (
-        "actions/upload-artifact",
-        "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-    ),
-    (
-        "actions/download-artifact",
-        "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-    ),
-];
+const REMOTE_CLOSURE_SCHEMA: u32 = 1;
 
-const REMOTE_EXECUTABLE_CLOSURE: [(&str, &str); 15] = [
-    (
-        "actions/checkout/action.yml",
-        "d59219cb79590abdb877deaa14e3b65a00c05318bf5a6f3b989b9162b5d08c35",
-    ),
-    (
-        "actions/checkout/dist/index.js",
-        "b604bf1c08a471aedf51ddddbd3e8d03041683db270692d66cd1b4b097457818",
-    ),
-    (
-        "jdx/mise-action/action.yml",
-        "d39d054a1402d4260af8343352cd54f4a44453276abfc2f9f47206e8beb00dec",
-    ),
-    (
-        "jdx/mise-action/dist/index.js",
-        "8ca04f766d0b1ff41c13c873728288252ade6c6f3d2783212587b0f95a7604b2",
-    ),
-    (
-        "actions/cache/action.yml",
-        "c04edf35104c16c8944076df01561748bac9cd10941417e467a236e508e52dda",
-    ),
-    (
-        "actions/cache/dist/restore/index.js",
-        "79a05f72974c12e3796bf09c897fce453a855f5f4a4abc980be6f671c545954d",
-    ),
-    (
-        "actions/cache/dist/save/index.js",
-        "9193aa9dbe5025f2bf39802ae241470af35c5e5737fd4bec6e1d6dbaad153bb4",
-    ),
-    (
-        "actions/cache/restore/action.yml",
-        "bb552a94cec165255080b7e13fe3d2051c6c79e321e99435b5859dc7de5e9057",
-    ),
-    (
-        "actions/cache/dist/restore-only/index.js",
-        "8522c6be9a4650a3b1571f7222293f262cc4c4708fbe061d8ed04654d476cf16",
-    ),
-    (
-        "actions/cache/save/action.yml",
-        "5da400e1a7551cee617339fd1a5281483d71e6c56d86dd117fbd354f047308ec",
-    ),
-    (
-        "actions/cache/dist/save-only/index.js",
-        "0d3cf341a79cdc0a8ce5a71103f46174e12cf4f98db46f15b8e604932eefd487",
-    ),
-    (
-        "actions/upload-artifact/action.yml",
-        "c5979822866a72362e609844b6ebe77d4b7e759af68cc1c2c425dcf51481fab4",
-    ),
-    (
-        "actions/upload-artifact/dist/upload/index.js",
-        "eea594941d8ee535974e0fbc03bbdf567f3abc78194f224b93f2df9a887ee2e9",
-    ),
-    (
-        "actions/download-artifact/action.yml",
-        "e98559b7a31ba31be4709f20d22102dc2737fa630f69a339eb89981151e505fe",
-    ),
-    (
-        "actions/download-artifact/dist/index.js",
-        "f4a6b7046eb834bed98bb687f6d08feb0bfe6fb32570e9da7de0707884c08b31",
-    ),
-];
+#[derive(Debug, Deserialize)]
+struct RemoteClosure {
+    schema_version: u32,
+    action: Vec<RemoteAction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteAction {
+    root: String,
+    sha: String,
+    files: Vec<RemoteFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteFile {
+    path: String,
+    kind: String,
+    sha256: String,
+}
 
 /// A deterministic disposable release identity used only to exercise
 /// materialization during the audit (never written anywhere).
@@ -115,6 +58,7 @@ const AUDIT_CALVER: &str = "2026.7.0";
 pub fn audit(root: &Path) -> Result<String, String> {
     let manifest = FleetManifest::load(root)?;
     let caches = CacheContract::load(&root.join("fleet").join("caches.toml"))?;
+    let remote_closure = load_remote_closure(root)?;
 
     // Composite building blocks must exist and match their canonical bytes exactly
     // (body included), so a neutered run-script fails the audit.
@@ -142,7 +86,7 @@ pub fn audit(root: &Path) -> Result<String, String> {
             let rendered = render::callable_workflow(contract, &caches, &block_sha);
             let committed = read_committed(&callable_path(root, class))?;
             require_equal(&committed, &rendered, &callable_path_display(class))?;
-            audit_callable_structure(class, &rendered, &block_sha)?;
+            audit_callable_structure(class, &rendered, &block_sha, &remote_closure)?;
         }
     }
 
@@ -152,6 +96,214 @@ pub fn audit(root: &Path) -> Result<String, String> {
         manifest.classes().len(),
         ALL_CLASSES.len(),
     ))
+}
+
+fn load_remote_closure(root: &Path) -> Result<RemoteClosure, String> {
+    let path = root.join("fleet").join("remote-actions.toml");
+    let bytes = std::fs::read_to_string(&path)
+        .map_err(|error| format!("reading {}: {error}", path.display()))?;
+    let closure: RemoteClosure =
+        toml::from_str(&bytes).map_err(|error| format!("parsing {}: {error}", path.display()))?;
+    if closure.schema_version != REMOTE_CLOSURE_SCHEMA || closure.action.is_empty() {
+        return Err("remote action closure has unsupported schema or no actions".to_string());
+    }
+    let mut roots = BTreeSet::new();
+    for action in &closure.action {
+        if action.root.split('/').count() != 2 || !is_sha40(&action.sha) || action.files.is_empty()
+        {
+            return Err(format!(
+                "invalid remote action identity {}@{}",
+                action.root, action.sha
+            ));
+        }
+        if !roots.insert((&action.root, &action.sha)) {
+            return Err(format!(
+                "duplicate remote action {}@{}",
+                action.root, action.sha
+            ));
+        }
+        let mut paths = BTreeSet::new();
+        let mut manifests = 0;
+        let mut behaviors = 0;
+        for file in &action.files {
+            validate_relative_path(&file.path)?;
+            if !paths.insert(&file.path) {
+                return Err(format!(
+                    "duplicate remote closure path {}/{}",
+                    action.root, file.path
+                ));
+            }
+            match file.kind.as_str() {
+                "manifest" => manifests += 1,
+                "behavior" => behaviors += 1,
+                other => return Err(format!("unknown remote closure kind {other:?}")),
+            }
+            if file.sha256.len() != 64
+                || !file
+                    .sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                return Err(format!(
+                    "malformed SHA-256 for {}/{}",
+                    action.root, file.path
+                ));
+            }
+        }
+        if manifests == 0 || behaviors == 0 {
+            return Err(format!(
+                "{} has no manifest or executable behavior",
+                action.root
+            ));
+        }
+    }
+    Ok(closure)
+}
+
+fn validate_relative_path(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.contains('\n')
+        || Path::new(path)
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("unsafe remote closure path {path:?}"));
+    }
+    Ok(())
+}
+
+/// Fetch every admitted file from its immutable commit, verify SHA-256, parse
+/// each action manifest, and prove its exact Node `main`/`pre`/`post` closure.
+pub fn verify_remote_closure(root: &Path) -> Result<String, String> {
+    let closure = load_remote_closure(root)?;
+    let mut handles = Vec::new();
+    for action in &closure.action {
+        for file in &action.files {
+            let action_root = action.root.clone();
+            let sha = action.sha.clone();
+            let path = file.path.clone();
+            let expected = file.sha256.clone();
+            handles.push(std::thread::spawn(move || {
+                let endpoint = format!("repos/{action_root}/contents/{path}?ref={sha}");
+                let output = Command::new("gh")
+                    .args([
+                        "api",
+                        "-H",
+                        "Accept: application/vnd.github.raw+json",
+                        &endpoint,
+                    ])
+                    .output()
+                    .map_err(|error| format!("executing gh for {endpoint}: {error}"))?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "fetching {endpoint} failed: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                let observed = hex::encode(Sha256::digest(&output.stdout));
+                if observed != expected {
+                    return Err(format!(
+                        "remote closure hash mismatch for {action_root}/{path}: expected {expected}, observed {observed}"
+                    ));
+                }
+                Ok(((action_root, path), output.stdout))
+            }));
+        }
+    }
+    let mut fetched = BTreeMap::new();
+    for handle in handles {
+        let (identity, bytes) = handle
+            .join()
+            .map_err(|_| "remote closure fetch worker panicked".to_string())??;
+        if fetched.insert(identity.clone(), bytes).is_some() {
+            return Err(format!("duplicate fetched remote file {identity:?}"));
+        }
+    }
+    for action in &closure.action {
+        let declared_behaviors = action
+            .files
+            .iter()
+            .filter(|file| file.kind == "behavior")
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let mut derived_behaviors = BTreeSet::new();
+        for manifest in action.files.iter().filter(|file| file.kind == "manifest") {
+            let raw = fetched
+                .get(&(action.root.clone(), manifest.path.clone()))
+                .ok_or_else(|| {
+                    format!("missing fetched manifest {}/{}", action.root, manifest.path)
+                })?;
+            derive_node_behaviors(&manifest.path, raw, &mut derived_behaviors)?;
+        }
+        if derived_behaviors != declared_behaviors {
+            return Err(format!(
+                "remote executable closure mismatch for {}: derived {derived_behaviors:?}, declared {declared_behaviors:?}",
+                action.root
+            ));
+        }
+    }
+    Ok(format!(
+        "remote closure valid: {} actions",
+        closure.action.len()
+    ))
+}
+
+fn derive_node_behaviors(
+    manifest_path: &str,
+    raw: &[u8],
+    output: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let text = std::str::from_utf8(raw)
+        .map_err(|error| format!("manifest {manifest_path} is not UTF-8: {error}"))?;
+    let documents = yaml_rust2::YamlLoader::load_from_str(text)
+        .map_err(|error| format!("parsing remote manifest {manifest_path}: {error}"))?;
+    let document = documents
+        .first()
+        .ok_or_else(|| format!("empty remote manifest {manifest_path}"))?;
+    let using = document["runs"]["using"]
+        .as_str()
+        .ok_or_else(|| format!("manifest {manifest_path} has no string runs.using"))?;
+    if !matches!(using, "node12" | "node16" | "node20" | "node24") {
+        return Err(format!(
+            "manifest {manifest_path} uses unsupported runtime {using:?}; closure must fail closed"
+        ));
+    }
+    let parent = Path::new(manifest_path).parent().unwrap_or(Path::new(""));
+    for (field, required) in [("main", true), ("pre", false), ("post", false)] {
+        let value = document["runs"][field].as_str();
+        if required && value.is_none() {
+            return Err(format!("manifest {manifest_path} has no runs.{field}"));
+        }
+        if let Some(value) = value {
+            let joined = normalize_join(parent, Path::new(value))?;
+            output.insert(joined);
+        }
+    }
+    Ok(())
+}
+
+fn normalize_join(parent: &Path, child: &Path) -> Result<String, String> {
+    let mut segments = Vec::new();
+    for component in parent.components().chain(child.components()) {
+        match component {
+            Component::Normal(segment) => segments.push(
+                segment
+                    .to_str()
+                    .ok_or_else(|| "non-UTF-8 remote behavior path".to_string())?,
+            ),
+            Component::ParentDir => {
+                segments
+                    .pop()
+                    .ok_or_else(|| "remote behavior path escapes action root".to_string())?;
+            }
+            Component::CurDir => {}
+            _ => return Err("absolute remote behavior path".to_string()),
+        }
+    }
+    if segments.is_empty() {
+        return Err("empty remote behavior path".to_string());
+    }
+    Ok(segments.join("/"))
 }
 
 fn template_path(root: &Path, class: RepositoryClass) -> std::path::PathBuf {
@@ -353,6 +505,7 @@ fn audit_callable_structure(
     class: RepositoryClass,
     rendered: &str,
     block_sha: &str,
+    remote_closure: &RemoteClosure,
 ) -> Result<(), String> {
     let what = callable_path_display(class);
 
@@ -384,7 +537,7 @@ fn audit_callable_structure(
             return Err(format!("{what}: non-40-hex or mutable ref {reference:?}"));
         }
     }
-    audit_admitted_closure(rendered, block_sha, &what)?;
+    audit_admitted_closure(rendered, block_sha, &what, remote_closure)?;
 
     // Public unmerged-code events route the Velnor lane to GitHub-hosted; no
     // public-unmerged Velnor route is allowed.
@@ -416,7 +569,12 @@ fn audit_callable_structure(
     Ok(())
 }
 
-fn audit_admitted_closure(rendered: &str, block_sha: &str, what: &str) -> Result<(), String> {
+fn audit_admitted_closure(
+    rendered: &str,
+    block_sha: &str,
+    what: &str,
+    closure: &RemoteClosure,
+) -> Result<(), String> {
     for identity in uses_identities(rendered) {
         let (target, reference) = identity
             .rsplit_once('@')
@@ -433,35 +591,26 @@ fn audit_admitted_closure(rendered: &str, block_sha: &str, what: &str) -> Result
             }
             continue;
         }
-        if !ADMITTED_REMOTE_ROOTS
+        let Some(action) = closure
+            .action
             .iter()
-            .any(|(admitted, sha)| *admitted == root && *sha == reference)
-        {
+            .find(|action| action.root == root && action.sha == reference)
+        else {
             return Err(format!("{what}: unadmitted remote action {identity}"));
-        }
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    for (path, digest) in REMOTE_EXECUTABLE_CLOSURE {
-        if digest.len() != 64
-            || !digest
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(format!(
-                "{what}: malformed executable closure digest for {path}"
-            ));
-        }
-        if !seen.insert(path) {
-            return Err(format!("{what}: duplicate executable closure path {path}"));
-        }
-    }
-    for (root, _) in ADMITTED_REMOTE_ROOTS {
-        if !REMOTE_EXECUTABLE_CLOSURE
+        };
+        let subpath = target.split('/').skip(2).collect::<Vec<_>>().join("/");
+        let manifest = if subpath.is_empty() {
+            "action.yml".to_string()
+        } else {
+            format!("{subpath}/action.yml")
+        };
+        if !action
+            .files
             .iter()
-            .any(|(path, _)| path.starts_with(&format!("{root}/")))
+            .any(|file| file.kind == "manifest" && file.path == manifest)
         {
             return Err(format!(
-                "{what}: admitted root {root} has no executable closure"
+                "{what}: action identity {identity} has no bound manifest {manifest}"
             ));
         }
     }
@@ -517,5 +666,42 @@ fn require_contains(text: &str, needle: &str, what: &str, label: &str) -> Result
         Ok(())
     } else {
         Err(format!("{what}: missing {label}"))
+    }
+}
+
+#[cfg(test)]
+mod remote_closure_tests {
+    use super::*;
+
+    #[test]
+    fn node_manifest_derives_exact_main_pre_post_set() {
+        let raw = br#"runs:
+  using: node24
+  pre: ../dist/pre.js
+  main: ../dist/main.js
+  post: ../dist/post.js
+"#;
+        let mut output = BTreeSet::new();
+        derive_node_behaviors("sub/action.yml", raw, &mut output).unwrap();
+        assert_eq!(
+            output,
+            ["dist/main.js", "dist/post.js", "dist/pre.js"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn unknown_runtime_missing_main_and_escape_fail_closed() {
+        for raw in [
+            "runs:\n  using: nodeevil\n  main: dist/main.js\n",
+            "runs:\n  using: node24\n",
+            "runs:\n  using: node24\n  main: ../../escape.js\n",
+        ] {
+            assert!(
+                derive_node_behaviors("action.yml", raw.as_bytes(), &mut BTreeSet::new()).is_err()
+            );
+        }
     }
 }

@@ -37,11 +37,24 @@ fn run(mut args: impl Iterator<Item = String>) -> Result<String, String> {
         Some("generate") => run_generate(args),
         Some("render-consumer") => run_render_consumer(args),
         Some("audit") => run_audit(args),
+        Some("verify-remote") => run_verify_remote(args),
         Some(other) => Err(format!("unknown subcommand: {other}")),
         None => Err(
             "missing subcommand (expected: check, generate, render-consumer, or audit)".to_string(),
         ),
     }
+}
+
+fn run_verify_remote(mut args: impl Iterator<Item = String>) -> Result<String, String> {
+    let mut root: Option<PathBuf> = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--root" => root = Some(PathBuf::from(require_value(&mut args, "--root")?)),
+            other => return Err(format!("unexpected argument: {other}")),
+        }
+    }
+    let root = root.ok_or("verify-remote requires --root PATH")?;
+    audit::verify_remote_closure(&root)
 }
 
 fn run_check(mut args: impl Iterator<Item = String>) -> Result<String, String> {
