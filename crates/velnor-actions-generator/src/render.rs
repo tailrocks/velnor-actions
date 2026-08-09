@@ -1415,11 +1415,12 @@ correlation="$(printf '%s' "${PUBLISH_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
 mkdir -p .velnor-proof/publisher-metrics
 jq -n --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" \
   --argjson save_ms "$((finished_ms - PUBLISH_STARTED_MS))" \
-  '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,correlation:$correlation}' \
+  '{schema:1,cache_id:$cache_id,cache_save_ms:$save_ms,cache_lock_wait_ms:0,cache_lock_wait_source:"not-applicable-github",correlation:$correlation}' \
   > ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json"
 jq -e --arg cache_id "${PUBLISH_CACHE_ID}" --arg correlation "${correlation}" '
-  keys == ["cache_id","cache_lock_wait_ms","cache_save_ms","correlation","schema"] and
+  keys == ["cache_id","cache_lock_wait_ms","cache_lock_wait_source","cache_save_ms","correlation","schema"] and
   .schema == 1 and .cache_id == $cache_id and .correlation == $correlation and
+  .cache_lock_wait_source == "not-applicable-github" and .cache_lock_wait_ms == 0 and
   ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
 ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
 "#;
@@ -1470,6 +1471,7 @@ for value in "${disk_probe_started_ms}" "${disk_probe_finished_ms}"; do [[ "${va
 disk_latency_ms=$((disk_probe_finished_ms - disk_probe_started_ms))
 correlation="$(printf '%s' "${PROOF_CORRELATION}" | tr -cd 'a-zA-Z0-9._:-')"
 [[ -n "${correlation}" && "${correlation}" == "${PROOF_CORRELATION}" && "${output_digest}" =~ ^[0-9a-f]{64}$ ]]
+if [[ "${PROOF_LANE}" == github ]]; then cache_lock_wait_source=not-applicable-github; [[ "${cache_lock_wait_ms}" == 0 ]]; else cache_lock_wait_source=velnor-runtime-authority; fi
 psi_cpu="$(tr '\n' ';' < /proc/pressure/cpu)"; psi_io="$(tr '\n' ';' < /proc/pressure/io)"; psi_memory="$(tr '\n' ';' < /proc/pressure/memory)"
 mkdir -p .velnor-proof/metrics
 jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
@@ -1478,11 +1480,12 @@ jq -n --arg lane "${PROOF_LANE}" --argjson slot "${PROOF_SLOT}" \
   --argjson peak_memory_bytes "${peak_memory_bytes}" --argjson disk_bytes "${disk_bytes}" \
   --argjson restore_ms "${cache_restore_ms}" --argjson save_ms 0 --argjson copy_ms "${cache_copy_ms}" \
   --argjson lock_wait_ms "${cache_lock_wait_ms}" --argjson disk_latency_ms "${disk_latency_ms}" \
+  --arg lock_wait_source "${cache_lock_wait_source}" \
   --argjson io_pressure_stall_ms "${io_pressure_stall_ms}" \
   --arg psi_cpu "${psi_cpu}" --arg psi_io "${psi_io}" --arg psi_memory "${psi_memory}" \
   --arg cache_result "${cache_result}" --argjson cache_bytes "${cache_bytes}" --argjson cache_files "${cache_files}" \
   --arg output_digest "${output_digest}" --arg correlation "${correlation}" \
-  '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,disk_latency_ms:$disk_latency_ms,io_pressure_stall_ms:$io_pressure_stall_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
+  '{schema:1,lane:$lane,slot:$slot,required_step_start_ms:$required_step_start_ms,required_step_end_ms:$required_step_end_ms,required_steps_ms:$required_steps_ms,cpu_ms:$cpu_ms,peak_memory_bytes:$peak_memory_bytes,disk_bytes:$disk_bytes,cache_restore_ms:$restore_ms,cache_save_ms:$save_ms,cache_copy_ms:$copy_ms,cache_lock_wait_ms:$lock_wait_ms,cache_lock_wait_source:$lock_wait_source,disk_latency_ms:$disk_latency_ms,io_pressure_stall_ms:$io_pressure_stall_ms,psi:{cpu:$psi_cpu,io:$psi_io,memory:$psi_memory},cache_result:$cache_result,cache_bytes:$cache_bytes,cache_files:$cache_files,output_digest:$output_digest,correlation:$correlation}' \
   > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
 export METRICS_FILE=".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
 export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT}" EXPECTED_METRICS_CORRELATION="${correlation}"
@@ -1492,8 +1495,9 @@ export EXPECTED_METRICS_LANE="${PROOF_LANE}" EXPECTED_METRICS_SLOT="${PROOF_SLOT
 pub const METRICS_VALIDATE_SCRIPT: &str = r#"set -euo pipefail
 [[ -f "${METRICS_FILE}" && ! -L "${METRICS_FILE}" ]]
 jq -e --arg lane "${EXPECTED_METRICS_LANE}" --argjson slot "${EXPECTED_METRICS_SLOT}" --arg correlation "${EXPECTED_METRICS_CORRELATION}" '
-  keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","io_pressure_stall_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
+  keys == ["cache_bytes","cache_copy_ms","cache_files","cache_lock_wait_ms","cache_lock_wait_source","cache_restore_ms","cache_result","cache_save_ms","correlation","cpu_ms","disk_bytes","disk_latency_ms","io_pressure_stall_ms","lane","output_digest","peak_memory_bytes","psi","required_step_end_ms","required_step_start_ms","required_steps_ms","schema","slot"] and
   .schema == 1 and .lane == $lane and .slot == $slot and .correlation == $correlation and
+  ((.lane == "github" and .cache_lock_wait_source == "not-applicable-github" and .cache_lock_wait_ms == 0) or (.lane == "velnor" and .cache_lock_wait_source == "velnor-runtime-authority")) and
   (.output_digest | type == "string" and test("^[0-9a-f]{64}$")) and
   (.cache_result | type == "string" and test("^(exact|miss|exact,miss)$")) and
   (.psi | keys == ["cpu","io","memory"] and all(.[]; type == "string")) and
@@ -1519,13 +1523,13 @@ jq -e --arg owner "${EXPECTED_OWNER}" --arg campaign "${EXPECTED_CAMPAIGN}" --ar
   .schema == 1 and .owner == $owner and .campaign == $campaign and .wave == $wave and
   .reservation_id == $reservation and .state == "released" and
   .participant_count == $count and .ready_count == $count and
-  (.expires_at_epoch | type == "number") and
+  (.expires_at_epoch | type == "number" and floor == . and . >= 0 and . <= 9007199254740991) and
   (.slots | type == "array" and length == $count) and
   ([range(0; $count)] as $expected | ([.slots[].slot] | sort) == $expected) and
   ([.slots[].materialization_id] | length == (unique | length)) and
   (all(.slots[]; (keys == ["materialization_id","reserved_bytes","slot"]) and
     (.materialization_id | type == "string" and test("^[a-z0-9][a-z0-9._:-]{7,127}$")) and
-    (.reserved_bytes | type == "number" and . >= $peak)))
+    (.reserved_bytes | type == "number" and floor == . and . >= $peak and . <= 9007199254740991)))
 ' <<<"${record}" >/dev/null || fail "coordinator identity, slot set, or peak reservation mismatch"
 expires="$(jq -r '.expires_at_epoch' <<<"${record}")"
 [[ "${expires}" =~ ^[0-9]+$ && "${expires}" -gt "$(date +%s)" ]] || fail "coordinator record expired"
@@ -1551,7 +1555,7 @@ jq -e --arg digest "${EXPECTED_RECORD_DIGEST}" --arg materialization "${expected
   .wave == $wave and .reservation_id == $reservation and .slot == $slot and
   .state == "released" and
   .materialization_id == $materialization and
-  (.reserved_bytes | type == "number" and . >= $peak)
+  (.reserved_bytes | type == "number" and floor == . and . >= $peak and . <= 9007199254740991)
 ' <<<"${grant}" >/dev/null || fail "grant correlation, slot, or peak mismatch"
 "#;
 
@@ -1591,6 +1595,44 @@ artifact_ids="$(jq -r '[.[].id | tostring] | join(",")' <<<"${artifacts}")"
 printf 'artifact_ids=%s\ncontract=success\n' "${artifact_ids}" >> "${GITHUB_OUTPUT}"
 "#;
 
+pub fn git_cache_digest_script(declarations: &[&CacheDeclaration], root: &str) -> String {
+    let mut script = String::from(
+        r#"set -euo pipefail
+digest_inputs() {
+  local root="$1"; shift
+  local manifest path digest encoded
+  manifest="$(mktemp)"
+  git -C "${root}" ls-files -z -- "$@" | LC_ALL=C sort -z | while IFS= read -r -d '' path; do
+    [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+    [[ -f "${root}/${path}" && ! -L "${root}/${path}" ]]
+    digest="$(sha256sum -- "${root}/${path}" | cut -d' ' -f1)"
+    encoded="$(printf '%s' "${path}" | openssl base64 -A)"
+    printf '%s %s\n' "${digest}" "${encoded}"
+  done > "${manifest}"
+  sha256sum "${manifest}" | cut -d' ' -f1
+  rm -f -- "${manifest}"
+}
+"#,
+    );
+    for cache in declarations {
+        let id = cache.id.as_str();
+        let globs = cache
+            .lock_globs
+            .iter()
+            .flat_map(|glob| {
+                glob.strip_prefix("**/")
+                    .map_or_else(|| vec![glob.as_str()], |root| vec![root, glob.as_str()])
+            })
+            .map(|glob| format!("'{glob}'"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        script.push_str(&format!(
+            "toolchain=\"$(digest_inputs '{root}' 'mise.lock' 'mise.toml' 'rust-toolchain.toml')\"\nlock=\"$(digest_inputs '{root}' {globs})\"\nfor value in \"${{toolchain}}\" \"${{lock}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]]; done\nprintf '{id}-toolchain=%s\\n{id}-lock=%s\\n' \"${{toolchain}}\" \"${{lock}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
+        ));
+    }
+    script
+}
+
 fn lane_steps(
     b: &mut Builder,
     contract: &ClassContract,
@@ -1612,27 +1654,7 @@ fn lane_steps(
     b.line(6, "- name: Derive current-head cache digests");
     b.line(8, "id: current-cache-keys");
     b.line(8, "shell: bash");
-    b.line(8, "env:");
-    for cache in &declarations {
-        let env = cache.id.replace('-', "_").to_ascii_uppercase();
-        let globs = cache
-            .lock_globs
-            .iter()
-            .map(|glob| format!("'{glob}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        b.line(10, &format!("{env}_TOOLCHAIN: ${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}"));
-        b.line(10, &format!("{env}_LOCK: ${{{{ hashFiles({globs}) }}}}"));
-    }
-    let mut current_key_script = String::from("set -euo pipefail\n");
-    for cache in &declarations {
-        let env = cache.id.replace('-', "_").to_ascii_uppercase();
-        let id = cache.id.as_str();
-        current_key_script.push_str(&format!(
-            "for value in \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\"; do [[ \"${{value}}\" =~ ^[0-9a-f]{{64}}$ ]] || {{ echo 'current cache digest missing or invalid' >&2; exit 1; }}; done\nprintf '{id}-toolchain=%s\\n{id}-lock=%s\\n' \"${{{env}_TOOLCHAIN}}\" \"${{{env}_LOCK}}\" >> \"${{GITHUB_OUTPUT}}\"\n"
-        ));
-    }
-    b.run_block(8, &current_key_script);
+    b.run_block(8, &git_cache_digest_script(&declarations, "."));
     b.line(
         6,
         "- name: Check out protected base for unmerged cache identity",
@@ -1652,6 +1674,17 @@ fn lane_steps(
     );
     b.line(10, "path: .velnor-protected-base");
     b.line(10, "persist-credentials: false");
+    b.line(6, "- name: Derive protected-base cache digests");
+    b.line(8, "id: base-cache-keys");
+    b.line(
+        8,
+        "if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+    );
+    b.line(8, "shell: bash");
+    b.run_block(
+        8,
+        &git_cache_digest_script(&declarations, ".velnor-protected-base"),
+    );
     if lane == Lane::Velnor {
         for cache in caches
             .declarations()
@@ -1748,16 +1781,19 @@ fn lane_steps(
                 id = cache.id
             ),
         );
-        let base_globs = cache
-            .lock_globs
-            .iter()
-            .map(|glob| format!("'.velnor-protected-base/{glob}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        b.line(10, &format!("{env}_BASE_TOOLCHAIN: ${{{{ hashFiles('.velnor-protected-base/mise.lock', '.velnor-protected-base/mise.toml', '.velnor-protected-base/rust-toolchain.toml') }}}}"));
         b.line(
             10,
-            &format!("{env}_BASE_LOCK: ${{{{ hashFiles({base_globs}) }}}}"),
+            &format!(
+                "{env}_BASE_TOOLCHAIN: ${{{{ steps.base-cache-keys.outputs['{id}-toolchain'] }}}}",
+                id = cache.id
+            ),
+        );
+        b.line(
+            10,
+            &format!(
+                "{env}_BASE_LOCK: ${{{{ steps.base-cache-keys.outputs['{id}-lock'] }}}}",
+                id = cache.id
+            ),
         );
         b.line(
             10,

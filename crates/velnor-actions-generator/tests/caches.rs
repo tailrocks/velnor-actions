@@ -404,6 +404,88 @@ fn both_mode_has_one_cache_publisher_and_validated_nonempty_digests() {
     );
 }
 
+fn initialize_digest_repo(path: &std::path::Path, marker: &str) {
+    std::fs::create_dir_all(path).unwrap();
+    for (name, body) in [
+        ("mise.lock", "mise-lock\n"),
+        ("mise.toml", "[tools]\n"),
+        ("rust-toolchain.toml", "[toolchain]\nchannel='stable'\n"),
+        ("Cargo.toml", "[workspace]\nmembers=[]\n"),
+        ("Cargo.lock", marker),
+    ] {
+        std::fs::write(path.join(name), body).unwrap();
+    }
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .args([
+                "add",
+                "mise.lock",
+                "mise.toml",
+                "rust-toolchain.toml",
+                "Cargo.toml",
+                "Cargo.lock"
+            ])
+            .current_dir(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+fn run_git_digest(root: &std::path::Path, tree: &str) -> String {
+    let contract = load();
+    let declarations = contract
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == RepositoryClass::Code)
+        .collect::<Vec<_>>();
+    let output = root.join(format!("digest-{}.out", tree.replace('/', "-")));
+    if output.exists() {
+        std::fs::remove_file(&output).unwrap();
+    }
+    let status = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(velnor_actions_generator::render::git_cache_digest_script(
+            &declarations,
+            tree,
+        ))
+        .env("GITHUB_OUTPUT", &output)
+        .current_dir(root)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    std::fs::read_to_string(output).unwrap()
+}
+
+#[test]
+fn protected_base_and_current_digests_are_cryptographically_independent() {
+    let root = common::temp_dir("independent-cache-digests");
+    initialize_digest_repo(&root, "head-one\n");
+    initialize_digest_repo(&root.join("protected-base"), "base-one\n");
+
+    let current_one = run_git_digest(&root, ".");
+    let base_one = run_git_digest(&root, "protected-base");
+    std::fs::write(root.join("protected-base/Cargo.lock"), "base-two\n").unwrap();
+    let current_two = run_git_digest(&root, ".");
+    let base_two = run_git_digest(&root, "protected-base");
+    assert_eq!(current_one, current_two);
+    assert_ne!(base_one, base_two);
+
+    std::fs::write(root.join("Cargo.lock"), "head-two\n").unwrap();
+    let current_three = run_git_digest(&root, ".");
+    let base_three = run_git_digest(&root, "protected-base");
+    assert_ne!(current_two, current_three);
+    assert_eq!(base_two, base_three);
+}
+
 #[test]
 fn generated_cache_proof_dag_is_evidence_bearing_and_single_writer() {
     let contract = load();
@@ -702,6 +784,17 @@ fn reservation_barrier_enforces_exact_one_or_eight_slot_release() {
         8
     ));
     assert!(!run_reservation_barrier(
+        &reservation_record(8).replace("\"reserved_bytes\":9000", "\"reserved_bytes\":9000.5"),
+        8
+    ));
+    assert!(!run_reservation_barrier(
+        &reservation_record(8).replace(
+            "\"reserved_bytes\":9000",
+            "\"reserved_bytes\":9007199254740992"
+        ),
+        8
+    ));
+    assert!(!run_reservation_barrier(
         &reservation_record(1).replace("campaign-0001", "campaign-wrong"),
         1
     ));
@@ -781,6 +874,10 @@ fn reservation_grant_is_bound_to_record_slot_and_peak() {
         &grant.replace("\"reserved_bytes\":9000", "\"reserved_bytes\":1"),
         3
     ));
+    assert!(!run_reservation_grant(
+        &grant.replace("\"reserved_bytes\":9000", "\"reserved_bytes\":9000.5"),
+        3
+    ));
 }
 
 fn run_metrics_validator(json: &str, correlation: &str) -> bool {
@@ -802,7 +899,7 @@ fn run_metrics_validator(json: &str, correlation: &str) -> bool {
 #[test]
 fn metrics_schema_enforces_units_boundaries_redaction_and_correlation() {
     let valid = format!(
-        r#"{{"schema":1,"lane":"github","slot":3,"required_step_start_ms":1000,"required_step_end_ms":1250,"required_steps_ms":250,"cpu_ms":120,"peak_memory_bytes":4096,"disk_bytes":8192,"cache_restore_ms":20,"cache_save_ms":0,"cache_copy_ms":4,"cache_lock_wait_ms":0,"disk_latency_ms":2,"io_pressure_stall_ms":1,"psi":{{"cpu":"some avg10=0.00 total=1","io":"some avg10=0.00 total=2","memory":"some avg10=0.00 total=3"}},"cache_result":"exact","cache_bytes":1024,"cache_files":4,"output_digest":"{DIGEST_A}","correlation":"campaign-0001:wave-0001"}}"#
+        r#"{{"schema":1,"lane":"github","slot":3,"required_step_start_ms":1000,"required_step_end_ms":1250,"required_steps_ms":250,"cpu_ms":120,"peak_memory_bytes":4096,"disk_bytes":8192,"cache_restore_ms":20,"cache_save_ms":0,"cache_copy_ms":4,"cache_lock_wait_ms":0,"cache_lock_wait_source":"not-applicable-github","disk_latency_ms":2,"io_pressure_stall_ms":1,"psi":{{"cpu":"some avg10=0.00 total=1","io":"some avg10=0.00 total=2","memory":"some avg10=0.00 total=3"}},"cache_result":"exact","cache_bytes":1024,"cache_files":4,"output_digest":"{DIGEST_A}","correlation":"campaign-0001:wave-0001"}}"#
     );
     assert!(run_metrics_validator(&valid, "campaign-0001:wave-0001"));
     assert!(!run_metrics_validator(&valid, "other-correlation"));
@@ -842,6 +939,7 @@ fn publisher_metrics_measure_the_only_save_boundary() {
         std::fs::read_to_string(root.join(".velnor-proof/publisher-metrics/tools.json")).unwrap();
     assert!(metrics.contains(r#""cache_save_ms": 123"#));
     assert!(metrics.contains(r#""cache_lock_wait_ms": 0"#));
+    assert!(metrics.contains(r#""cache_lock_wait_source": "not-applicable-github""#));
 
     let invalid = std::process::Command::new("bash")
         .arg("-c")
