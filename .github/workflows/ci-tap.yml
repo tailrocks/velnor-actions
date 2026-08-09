@@ -142,10 +142,10 @@ jobs:
             [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ && "${WORKFLOW_SHA}" == "${HEAD_SHA}" ]] || fail "recovery ref is not exact workflow head"
             is_id "${RECOVERY_PROOF_ID}" || fail "invalid recovery proof id"
             [[ "${RUN_ID}" =~ ^[1-9][0-9]*$ ]] || fail "invalid allocated run ID"
-            matching_prs="$(gh api "repos/${REPOSITORY}/pulls?state=open&per_page=100" --paginate --slurp --jq "map(.[]) | map(select(.head.sha == \"${HEAD_SHA}\")) | length")"
+            matching_prs="$(gh api --paginate --slurp "repos/${REPOSITORY}/pulls?state=open&per_page=100" | jq --arg head "${HEAD_SHA}" 'map(.[]) | map(select(.head.sha == $head)) | length')"
             [[ "${matching_prs}" == "1" ]] || fail "dispatch head is not one unique current open PR head"
             gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq ".id == ${RUN_ID} and .event == \"workflow_dispatch\" and .head_sha == \"${HEAD_SHA}\" and .display_title == \"CI recovery ${RECOVERY_PROOF_ID}\"" | grep -qx true || fail "allocated run does not bind recovery marker and head"
-            duplicate_count="$(gh api "repos/${REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=100" --paginate --slurp --jq "map(.workflow_runs[]) | map(select(.display_title == \"CI recovery ${RECOVERY_PROOF_ID}\" and .head_sha == \"${HEAD_SHA}\")) | length")"
+            duplicate_count="$(gh api --paginate --slurp "repos/${REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=100" | jq --arg title "CI recovery ${RECOVERY_PROOF_ID}" --arg head "${HEAD_SHA}" 'map(.workflow_runs[]) | map(select(.display_title == $title and .head_sha == $head)) | length')"
             [[ "${duplicate_count}" == "1" ]] || fail "duplicate or unknown recovery operation"
             [[ -z "${BENCHMARK_CAMPAIGN}${CACHE_PROOF_ID}" ]] || fail "recovery cannot combine with another operation"
             correlation="${RECOVERY_PROOF_ID}"
@@ -785,6 +785,7 @@ jobs:
     outputs:
       contract: ${{ steps.reserve.outputs.contract }}
       record_digest: ${{ steps.reserve.outputs.record_digest }}
+      record_base64: ${{ steps.reserve.outputs.record_base64 }}
     steps:
       - name: Validate atomic all-slots-ready reservation
         id: reserve
@@ -822,7 +823,8 @@ jobs:
           [[ "${expires}" =~ ^[0-9]+$ && "${expires}" -gt "$(date +%s)" ]] || fail "coordinator record expired"
           canonical="$(jq -cS . <<<"${record}")"
           record_digest="$(printf '%s' "${canonical}" | sha256sum | cut -d' ' -f1)"
-          printf 'contract=success\nrecord_digest=%s\n' "${record_digest}" >> "${GITHUB_OUTPUT}"
+          record_base64="$(printf '%s' "${canonical}" | openssl base64 -A)"
+          printf 'contract=success\nrecord_digest=%s\nrecord_base64=%s\n' "${record_digest}" "${record_base64}" >> "${GITHUB_OUTPUT}"
 
   github_execute:
     name: github execute proof (${{ matrix.slot }})
@@ -1080,6 +1082,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_RECORD_DIGEST: ${{ needs.reservation_barrier.outputs.record_digest }}
+          EXPECTED_COORDINATOR_RECORD_B64: ${{ needs.reservation_barrier.outputs.record_base64 }}
           EXPECTED_CAMPAIGN: ${{ inputs.benchmark_campaign }}
           EXPECTED_WAVE: ${{ inputs.benchmark_wave }}
           EXPECTED_RESERVATION: ${{ inputs.benchmark_reservation }}
@@ -1090,12 +1093,17 @@ jobs:
           fail() { echo "reservation grant: $*" >&2; exit 1; }
           grant="${VELNOR_BENCHMARK_GRANT_V1-}"
           [[ -n "${grant}" ]] || fail "missing slot grant"
+          record="$(printf '%s' "${EXPECTED_COORDINATOR_RECORD_B64}" | openssl base64 -d -A 2>/dev/null)" || fail "invalid coordinator record encoding"
+          canonical="$(jq -cS . <<<"${record}")" || fail "invalid coordinator record"
+          actual_digest="$(printf '%s' "${canonical}" | sha256sum | cut -d' ' -f1)"
+          [[ "${actual_digest}" == "${EXPECTED_RECORD_DIGEST}" ]] || fail "coordinator record digest mismatch"
+          expected_materialization="$(jq -er --argjson slot "${EXPECTED_SLOT}" '.slots[] | select(.slot == $slot) | .materialization_id' <<<"${canonical}")" || fail "slot absent from coordinator record"
           jq -e 'keys == ["campaign","coordinator_digest","materialization_id","reservation_id","reserved_bytes","schema","slot","state","wave"]' <<<"${grant}" >/dev/null || fail "unknown or missing grant field"
-          jq -e --arg digest "${EXPECTED_RECORD_DIGEST}" --arg campaign "${EXPECTED_CAMPAIGN}" --arg wave "${EXPECTED_WAVE}" --arg reservation "${EXPECTED_RESERVATION}" --argjson slot "${EXPECTED_SLOT}" --argjson peak "${REQUIRED_PEAK_BYTES}" '
+          jq -e --arg digest "${EXPECTED_RECORD_DIGEST}" --arg materialization "${expected_materialization}" --arg campaign "${EXPECTED_CAMPAIGN}" --arg wave "${EXPECTED_WAVE}" --arg reservation "${EXPECTED_RESERVATION}" --argjson slot "${EXPECTED_SLOT}" --argjson peak "${REQUIRED_PEAK_BYTES}" '
             .schema == 1 and .coordinator_digest == $digest and .campaign == $campaign and
             .wave == $wave and .reservation_id == $reservation and .slot == $slot and
             .state == "released" and
-            (.materialization_id | type == "string" and test("^[a-z0-9][a-z0-9._:-]{7,127}$")) and
+            .materialization_id == $materialization and
             (.reserved_bytes | type == "number" and . >= $peak)
           ' <<<"${grant}" >/dev/null || fail "grant correlation, slot, or peak mismatch"
       - name: Check out repository into fresh workspace

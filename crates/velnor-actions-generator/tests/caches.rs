@@ -606,11 +606,52 @@ fn reservation_barrier_enforces_exact_one_or_eight_slot_release() {
 }
 
 fn run_reservation_grant(grant: &str, slot: usize) -> bool {
+    let canonical = reservation_record(8);
+    let encoded = std::process::Command::new("openssl")
+        .args(["base64", "-A"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(canonical.as_bytes())?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    let mut digest_child = std::process::Command::new("openssl")
+        .args(["dgst", "-sha256", "-r"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    digest_child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(canonical.as_bytes())
+        .unwrap();
+    let digest_output = digest_child.wait_with_output().unwrap();
+    let digest = String::from_utf8(digest_output.stdout)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let grant = grant.replace("__DIGEST__", &digest);
     std::process::Command::new("bash")
         .arg("-c")
         .arg(velnor_actions_generator::render::RESERVATION_GRANT_SCRIPT)
         .env("VELNOR_BENCHMARK_GRANT_V1", grant)
-        .env("EXPECTED_RECORD_DIGEST", DIGEST_A)
+        .env("EXPECTED_RECORD_DIGEST", digest)
+        .env(
+            "EXPECTED_COORDINATOR_RECORD_B64",
+            String::from_utf8(encoded.stdout).unwrap(),
+        )
         .env("EXPECTED_CAMPAIGN", "campaign-0001")
         .env("EXPECTED_WAVE", "wave-0001")
         .env("EXPECTED_RESERVATION", "reservation-0001")
@@ -623,13 +664,15 @@ fn run_reservation_grant(grant: &str, slot: usize) -> bool {
 
 #[test]
 fn reservation_grant_is_bound_to_record_slot_and_peak() {
-    let grant = format!(
-        r#"{{"campaign":"campaign-0001","coordinator_digest":"{DIGEST_A}","materialization_id":"materialization-03","reservation_id":"reservation-0001","reserved_bytes":9000,"schema":1,"slot":3,"state":"released","wave":"wave-0001"}}"#
-    );
+    let grant = r#"{"campaign":"campaign-0001","coordinator_digest":"__DIGEST__","materialization_id":"materialization-03","reservation_id":"reservation-0001","reserved_bytes":9000,"schema":1,"slot":3,"state":"released","wave":"wave-0001"}"#.to_owned();
     assert!(run_reservation_grant(&grant, 3));
     assert!(!run_reservation_grant(&grant, 2));
     assert!(!run_reservation_grant(
-        &grant.replace(DIGEST_A, DIGEST_B),
+        &grant.replace("__DIGEST__", DIGEST_B),
+        3
+    ));
+    assert!(!run_reservation_grant(
+        &grant.replace("materialization-03", "materialization-04"),
         3
     ));
     assert!(!run_reservation_grant(

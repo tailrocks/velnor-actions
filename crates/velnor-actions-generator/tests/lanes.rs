@@ -255,10 +255,15 @@ fn fake_recovery_gh() -> std::path::PathBuf {
         &executable,
         r#"#!/usr/bin/env bash
 set -euo pipefail
-url="${2-}"
-if [[ "${url}" == *'/pulls?'* ]]; then printf '%s\n' "${FAKE_PR_COUNT-1}"
+url=""
+for argument in "$@"; do
+  [[ "${argument}" == repos/* ]] && url="${argument}"
+done
+if [[ "${url}" == *'/pulls?'* ]]; then
+  if [[ "${FAKE_PR_COUNT-1}" == 1 ]]; then printf '[[{"head":{"sha":"__HEAD__"}}],[]]\n'; else printf '[[],[]]\n'; fi
 elif [[ "${url}" == *'/actions/runs/123' ]]; then printf '%s\n' "${FAKE_RUN_MATCH-true}"
-elif [[ "${url}" == *'/actions/runs?'* ]]; then printf '%s\n' "${FAKE_DUPLICATE_COUNT-1}"
+elif [[ "${url}" == *'/actions/runs?'* ]]; then
+  if [[ "${FAKE_DUPLICATE_COUNT-1}" == 1 ]]; then printf '[{"workflow_runs":[{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"}]},{"workflow_runs":[]}]\n'; else printf '[{"workflow_runs":[{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"},{"display_title":"CI recovery recovery-operation-0001","head_sha":"__HEAD__"}]}]\n'; fi
 elif [[ "${url}" == *'/git/ref/tags/2026.7.0' ]]; then printf '%s\t%s\n' "${FAKE_TAG_TYPE-commit}" "${FAKE_TAG_SHA-__HEAD__}"
 elif [[ "${url}" == *'/contents/.github/workflows/ci.yml?'* ]]; then printf '%s\n' "${FAKE_BLOB-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
 else exit 64
