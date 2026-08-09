@@ -300,7 +300,9 @@ pub fn callable_workflow(
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 5");
     b.line(4, "permissions:");
+    b.line(6, "actions: read");
     b.line(6, "contents: read");
+    b.line(6, "pull-requests: read");
     b.line(4, "outputs:");
     b.line(6, "correlation: ${{ steps.validate.outputs.correlation }}");
     b.line(4, "steps:");
@@ -578,8 +580,11 @@ fn render_cache_proof_jobs(
         );
         for cache in &declarations {
             let id = cache.id.as_str();
-            let selected = format!(
-                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+            // Cache proofs exercise every declared cache. Benchmarks preserve all
+            // non-target cache state and disable only the selected cache.
+            let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
+            let restore_selected = format!(
+                "${{{{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != '{id}' || inputs.benchmark_cache_mode != 'disabled') }}}}"
             );
             if lane == "velnor" {
                 b.line(6, &format!("- name: Capture {id} proof authority"));
@@ -651,7 +656,7 @@ fn render_cache_proof_jobs(
             b.run_block(8, &clean_cache_script(cache));
             b.line(6, &format!("- name: Restore {id} without saving"));
             b.line(8, &format!("id: restore-{id}"));
-            b.line(8, &format!("if: ${{{{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}}}"));
+            b.line(8, &format!("if: {restore_selected}"));
             b.line(
                 8,
                 &format!("uses: actions/cache/restore@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
@@ -698,9 +703,7 @@ fn render_cache_proof_jobs(
     b.line(4, "steps:");
     for cache in &declarations {
         let id = cache.id.as_str();
-        let selected = format!(
-            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
-        );
+        let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
         for lane in ["github", "velnor"] {
             b.line(6, &format!("- name: Download {lane} {id} restore evidence"));
             b.line(8, &format!("if: {selected}"));
@@ -765,9 +768,7 @@ fn render_cache_proof_jobs(
         );
         for cache in &declarations {
             let id = cache.id.as_str();
-            let selected = format!(
-                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
-            );
+            let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
             b.line(6, &format!("- name: Download {lane} {id} restore artifact"));
             b.line(8, &format!("if: {selected}"));
             b.line(8, &format!("uses: actions/download-artifact@{DOWNLOAD_ARTIFACT_REF} # {DOWNLOAD_ARTIFACT_VERSION}"));
@@ -801,9 +802,7 @@ fn render_cache_proof_jobs(
         b.run_block(8, METRICS_SCRIPT);
         for cache in &declarations {
             let id = cache.id.as_str();
-            let selected = format!(
-                "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
-            );
+            let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
             b.line(6, &format!("- name: Package {lane} {id} post-state"));
             b.line(8, &format!("if: {selected}"));
             b.line(8, "shell: bash");
@@ -849,7 +848,7 @@ fn render_cache_proof_jobs(
         8,
         &format!("uses: actions/checkout@{CHECKOUT_REF} # {CHECKOUT_VERSION}"),
     );
-    b.line(6, "- name: Download deterministic GitHub post-state");
+    b.line(6, "- name: Download every lane and slot post-state");
     b.line(
         8,
         &format!(
@@ -857,8 +856,18 @@ fn render_cache_proof_jobs(
         ),
     );
     b.line(8, "with:");
-    b.line(10, "name: proof-post-github-${{ github.run_id }}-0");
+    b.line(10, "pattern: proof-post-*-${{ github.run_id }}-*");
     b.line(10, "path: .velnor-proof/publish");
+    b.line(10, "merge-multiple: false");
+    b.line(6, "- name: Verify exact post-state set and lane equality");
+    b.line(8, "shell: bash");
+    b.line(8, "env:");
+    b.line(10, "RUN_ID: ${{ github.run_id }}");
+    b.line(
+        10,
+        "FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}",
+    );
+    b.run_block(8, &publisher_verify_script(&declarations));
     for cache in &declarations {
         let id = cache.id.as_str();
         let selected = format!(
@@ -939,7 +948,29 @@ fn clean_cache_script(cache: &CacheDeclaration) -> String {
 fn package_cache_script(cache: &CacheDeclaration, lane: &str, phase: &str) -> String {
     let destination = format!(".velnor-proof/{phase}/{lane}/{}", cache.id);
     format!(
-        "set -euo pipefail\nshopt -s globstar nullglob\ndestination='{destination}'\nrm -rf -- \"${{destination}}\"\nmkdir -p -- \"${{destination}}\"\n: > \"${{destination}}/files.list\"\nfor root in {roots}; do\n  if [[ -e \"${{root}}\" ]]; then find \"${{root}}\" -type f -print; fi\ndone | LC_ALL=C sort -u > \"${{destination}}/files.list\"\ntar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf \"${{destination}}/cache.tar\" -T \"${{destination}}/files.list\"\nsha256sum \"${{destination}}/files.list\" | cut -d' ' -f1 > \"${{destination}}/manifest.sha256\"\nsha256sum \"${{destination}}/cache.tar\" | cut -d' ' -f1 > \"${{destination}}/archive.sha256\"\nprintf '%s\\n' \"${{CACHE_HIT}}\" > \"${{destination}}/hit\"\nprintf '%s\\n' '{id}' > \"${{destination}}/cache-id\"\nprintf '%s\\n' '{lane}' > \"${{destination}}/lane\"",
+        r#"set -euo pipefail
+shopt -s globstar nullglob
+destination='{destination}'
+rm -rf -- "${{destination}}"
+mkdir -p -- "${{destination}}"
+: > "${{destination}}/files.nul"
+for root in {roots}; do
+  if [[ -e "${{root}}" ]]; then find "${{root}}" -type f -print0; fi
+done | LC_ALL=C sort -zu > "${{destination}}/files.nul"
+: > "${{destination}}/manifest.txt"
+while IFS= read -r -d '' file; do
+  [[ "${{file}}" != *$'\n'* && "${{file}}" != /* && "/${{file}}/" != */../* ]] || {{ echo 'unsafe cache path' >&2; exit 1; }}
+  mode="$(stat -c '%a' -- "${{file}}" 2>/dev/null || stat -f '%Lp' -- "${{file}}")"
+  digest="$(sha256sum -- "${{file}}" | cut -d' ' -f1)"
+  encoded="$(printf '%s' "${{file}}" | openssl base64 -A)"
+  printf '%s %s %s\n' "${{mode}}" "${{digest}}" "${{encoded}}"
+done < "${{destination}}/files.nul" | LC_ALL=C sort > "${{destination}}/manifest.txt"
+tar --null --files-from="${{destination}}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${{destination}}/cache.tar"
+sha256sum "${{destination}}/manifest.txt" | cut -d' ' -f1 > "${{destination}}/manifest.sha256"
+sha256sum "${{destination}}/cache.tar" | cut -d' ' -f1 > "${{destination}}/archive.sha256"
+printf '%s\n' "${{CACHE_HIT}}" > "${{destination}}/hit"
+printf '%s\n' '{id}' > "${{destination}}/cache-id"
+printf '%s\n' '{lane}' > "${{destination}}/lane""#,
         destination = destination,
         roots = fixed_roots(cache),
         id = cache.id,
@@ -985,11 +1016,11 @@ fn cache_action_with(
 }
 
 fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
-    let mut script = String::from("set -euo pipefail\nselected=0\n");
+    let mut script = format!("set -euo pipefail\n{EVIDENCE_VERIFIER}\nselected=0\n");
     for cache in declarations {
         let id = cache.id.as_str();
         script.push_str(&format!(
-            "if [[ -n \"${{CACHE_PROOF_ID}}\" || \"${{BENCHMARK_CACHE_ID}}\" == \"{id}\" ]]; then\n  selected=$((selected + 1))\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  for root in \"${{github}}\" \"${{velnor}}\"; do\n    test -f \"${{root}}/cache.tar\" -a -f \"${{root}}/archive.sha256\" -a -f \"${{root}}/manifest.sha256\" -a -f \"${{root}}/hit\"\n    test \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\n  done\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    github_hit=\"$(cat \"${{github}}/hit\")\"; velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n    if [[ \"${{CACHE_TEMPERATURE}}\" == cold ]]; then\n      [[ \"${{github_hit}}\" != true && \"${{velnor_hit}}\" != true ]]\n    else\n      [[ \"${{github_hit}}\" == true && \"${{velnor_hit}}\" == true ]]\n    fi\n  fi\nfi\n"
         ));
     }
     script.push_str(
@@ -998,16 +1029,65 @@ fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
     script
 }
 
+/// Fail-closed verifier shared by every cache-evidence boundary.
+pub const EVIDENCE_VERIFIER: &str = r#"verify_evidence() {
+  local root="$1" expected_lane="$2" expected_id="$3" required
+  for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+    [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+  done
+  [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+  [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+  [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+  [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+  local scratch="${root}.verified" mode digest encoded extra path actual_mode
+  rm -rf -- "${scratch}"
+  mkdir -p -- "${scratch}/tree"
+  : > "${scratch}/expected"
+  while read -r mode digest encoded extra; do
+    [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+    path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+    [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+    [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+    printf '%s\n' "${path}" >> "${scratch}/expected"
+  done < "${root}/manifest.txt"
+  LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+  [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+  tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+  diff -u "${scratch}/expected" "${scratch}/actual"
+  tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+  while read -r mode digest encoded extra; do
+    path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+    [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+    actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+    [[ "${actual_mode}" == "${mode}" ]]
+    [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+  done < "${root}/manifest.txt"
+  rm -rf -- "${scratch}"
+}"#;
+
 fn materialize_script(id: &str, lane: &str) -> String {
     format!(
-        "set -euo pipefail\nroot='.velnor-proof/execute/{lane}/{id}'\ntest \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\ntar -xf \"${{root}}/cache.tar\" -C .\nprintf '%s\\n' '{lane}:{id}:${{{{ matrix.slot }}}}' > \"${{root}}/materialization-id\""
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\nroot='.velnor-proof/execute/{lane}/{id}'\nverify_evidence \"${{root}}\" '{lane}' '{id}'\ntar -xf \"${{root}}/cache.tar\" -C .\nprintf '%s\\n' '{lane}:{id}:${{{{ matrix.slot }}}}' > \"${{root}}/materialization-id\""
     )
 }
 
 fn publish_materialize_script(id: &str) -> String {
     format!(
-        "set -euo pipefail\nroot='.velnor-proof/publish/post/github/{id}'\ntest \"$(sha256sum \"${{root}}/cache.tar\" | cut -d' ' -f1)\" = \"$(cat \"${{root}}/archive.sha256\")\"\ntar -xf \"${{root}}/cache.tar\" -C ."
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\nroot='.velnor-proof/publish/proof-post-github-${{{{ github.run_id }}}}-0/post/github/{id}'\nverify_evidence \"${{root}}\" github '{id}'\ntar -xf \"${{root}}/cache.tar\" -C ."
     )
+}
+
+fn publisher_verify_script(declarations: &[&CacheDeclaration]) -> String {
+    let mut script = format!(
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n[[ \"${{FANOUT}}\" =~ ^(1|8)$ ]]\nexpected=$((FANOUT * 2))\nactual=$(find .velnor-proof/publish -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')\n[[ \"${{actual}}\" == \"${{expected}}\" ]]\n"
+    );
+    for cache in declarations {
+        let id = cache.id.as_str();
+        script.push_str(&format!(
+            "for ((slot=0; slot<FANOUT; slot++)); do\n  github=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-${{slot}}/post/github/{id}\"\n  velnor=\".velnor-proof/publish/proof-post-velnor-${{RUN_ID}}-${{slot}}/post/velnor/{id}\"\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{velnor}}/archive.sha256\")\" ]]\n  [[ \"$(cat \"${{github}}/manifest.sha256\")\" == \"$(cat \"${{velnor}}/manifest.sha256\")\" ]]\n  if (( slot > 0 )); then\n    baseline=\".velnor-proof/publish/proof-post-github-${{RUN_ID}}-0/post/github/{id}\"\n    [[ \"$(cat \"${{github}}/archive.sha256\")\" == \"$(cat \"${{baseline}}/archive.sha256\")\" ]]\n  fi\ndone\n"
+        ));
+    }
+    script
 }
 
 const METRICS_SCRIPT: &str = r#"set -euo pipefail

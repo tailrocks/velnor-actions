@@ -79,7 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
+      pull-requests: read
     outputs:
       correlation: ${{ steps.validate.outputs.correlation }}
     steps:
@@ -551,7 +553,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Clean tools restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -559,7 +561,7 @@ jobs:
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
       - name: Restore tools without saving
         id: restore-tools
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -567,7 +569,7 @@ jobs:
             .local/share/mise/installs
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Package immutable tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
@@ -577,18 +579,26 @@ jobs:
           destination='.velnor-proof/restore/github/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Upload tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-github-tools-${{ github.run_id }}
@@ -596,7 +606,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
       - name: Clean dependencies restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -604,7 +614,7 @@ jobs:
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
       - name: Restore dependencies without saving
         id: restore-dependencies
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'dependencies' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -614,7 +624,7 @@ jobs:
             **/node_modules
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Package immutable dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
@@ -624,18 +634,26 @@ jobs:
           destination='.velnor-proof/restore/github/dependencies'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Upload dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-github-dependencies-${{ github.run_id }}
@@ -643,7 +661,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
       - name: Clean build-output restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -651,7 +669,7 @@ jobs:
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
       - name: Restore build-output without saving
         id: restore-build-output
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'build-output' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -659,7 +677,7 @@ jobs:
             **/target
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Package immutable build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
@@ -669,18 +687,26 @@ jobs:
           destination='.velnor-proof/restore/github/build-output'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in 'target' '**/target'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Upload build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-github-build-output-${{ github.run_id }}
@@ -701,7 +727,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Capture tools proof authority
         id: proof-authority-tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_ENV_PREFIX: TOOLS
@@ -734,7 +760,7 @@ jobs:
             printf 'materialization_id=%s\n' "${materialization_id}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate tools proof authority
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: tailrocks/velnor-actions/actions/cache-contract@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         with:
           schema-version: 1
@@ -755,7 +781,7 @@ jobs:
           materialization-id: ${{ steps.proof-authority-tools.outputs.materialization_id }}
           expected-materialization-id: ${{ github.run_id }}-velnor_restore-tools
       - name: Clean tools restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -763,7 +789,7 @@ jobs:
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
       - name: Restore tools without saving
         id: restore-tools
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -771,7 +797,7 @@ jobs:
             .local/share/mise/installs
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Package immutable tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-tools.outputs.cache-hit }}
@@ -781,18 +807,26 @@ jobs:
           destination='.velnor-proof/restore/velnor/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Upload tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-velnor-tools-${{ github.run_id }}
@@ -801,7 +835,7 @@ jobs:
           compression-level: 0
       - name: Capture dependencies proof authority
         id: proof-authority-dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_ENV_PREFIX: DEPENDENCIES
@@ -834,7 +868,7 @@ jobs:
             printf 'materialization_id=%s\n' "${materialization_id}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate dependencies proof authority
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: tailrocks/velnor-actions/actions/cache-contract@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         with:
           schema-version: 1
@@ -855,7 +889,7 @@ jobs:
           materialization-id: ${{ steps.proof-authority-dependencies.outputs.materialization_id }}
           expected-materialization-id: ${{ github.run_id }}-velnor_restore-dependencies
       - name: Clean dependencies restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -863,7 +897,7 @@ jobs:
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
       - name: Restore dependencies without saving
         id: restore-dependencies
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'dependencies' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -873,7 +907,7 @@ jobs:
             **/node_modules
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Package immutable dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-dependencies.outputs.cache-hit }}
@@ -883,18 +917,26 @@ jobs:
           destination='.velnor-proof/restore/velnor/dependencies'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Upload dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-velnor-dependencies-${{ github.run_id }}
@@ -903,7 +945,7 @@ jobs:
           compression-level: 0
       - name: Capture build-output proof authority
         id: proof-authority-build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_ENV_PREFIX: BUILD_OUTPUT
@@ -936,7 +978,7 @@ jobs:
             printf 'materialization_id=%s\n' "${materialization_id}"
           } >> "${GITHUB_OUTPUT}"
       - name: Validate build-output proof authority
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: tailrocks/velnor-actions/actions/cache-contract@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         with:
           schema-version: 1
@@ -957,7 +999,7 @@ jobs:
           materialization-id: ${{ steps.proof-authority-build-output.outputs.materialization_id }}
           expected-materialization-id: ${{ github.run_id }}-velnor_restore-build-output
       - name: Clean build-output restore destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -965,7 +1007,7 @@ jobs:
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
       - name: Restore build-output without saving
         id: restore-build-output
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'build-output' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -973,7 +1015,7 @@ jobs:
             **/target
           key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Package immutable build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-build-output.outputs.cache-hit }}
@@ -983,18 +1025,26 @@ jobs:
           destination='.velnor-proof/restore/velnor/build-output'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in 'target' '**/target'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Upload build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proof-restore-velnor-build-output-${{ github.run_id }}
@@ -1012,37 +1062,37 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download github tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-tools-${{ github.run_id }}
           path: .velnor-proof/barrier/github/tools
       - name: Download velnor tools restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-tools-${{ github.run_id }}
           path: .velnor-proof/barrier/velnor/tools
       - name: Download github dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-dependencies-${{ github.run_id }}
           path: .velnor-proof/barrier/github/dependencies
       - name: Download velnor dependencies restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-dependencies-${{ github.run_id }}
           path: .velnor-proof/barrier/velnor/dependencies
       - name: Download github build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-build-output-${{ github.run_id }}
           path: .velnor-proof/barrier/github/build-output
       - name: Download velnor build-output restore evidence
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-build-output-${{ github.run_id }}
@@ -1055,16 +1105,49 @@ jobs:
           BENCHMARK_CACHE_ID: ${{ inputs.benchmark_cache_id }}
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           selected=0
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_CACHE_ID}" == "tools" ]]; then
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CACHE_ID}" ]]; then
             selected=$((selected + 1))
             github='.velnor-proof/barrier/github/tools'
             velnor='.velnor-proof/barrier/velnor/tools'
-            for root in "${github}" "${velnor}"; do
-              test -f "${root}/cache.tar" -a -f "${root}/archive.sha256" -a -f "${root}/manifest.sha256" -a -f "${root}/hit"
-              test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
-            done
+            verify_evidence "${github}" github 'tools'
+            verify_evidence "${velnor}" velnor 'tools'
             test "$(cat "${github}/archive.sha256")" = "$(cat "${velnor}/archive.sha256")"
+            test "$(cat "${github}/manifest.sha256")" = "$(cat "${velnor}/manifest.sha256")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               github_hit="$(cat "${github}/hit")"; velnor_hit="$(cat "${velnor}/hit")"
               if [[ "${CACHE_TEMPERATURE}" == cold ]]; then
@@ -1074,15 +1157,14 @@ jobs:
               fi
             fi
           fi
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_CACHE_ID}" == "dependencies" ]]; then
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CACHE_ID}" ]]; then
             selected=$((selected + 1))
             github='.velnor-proof/barrier/github/dependencies'
             velnor='.velnor-proof/barrier/velnor/dependencies'
-            for root in "${github}" "${velnor}"; do
-              test -f "${root}/cache.tar" -a -f "${root}/archive.sha256" -a -f "${root}/manifest.sha256" -a -f "${root}/hit"
-              test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
-            done
+            verify_evidence "${github}" github 'dependencies'
+            verify_evidence "${velnor}" velnor 'dependencies'
             test "$(cat "${github}/archive.sha256")" = "$(cat "${velnor}/archive.sha256")"
+            test "$(cat "${github}/manifest.sha256")" = "$(cat "${velnor}/manifest.sha256")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               github_hit="$(cat "${github}/hit")"; velnor_hit="$(cat "${velnor}/hit")"
               if [[ "${CACHE_TEMPERATURE}" == cold ]]; then
@@ -1092,15 +1174,14 @@ jobs:
               fi
             fi
           fi
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_CACHE_ID}" == "build-output" ]]; then
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CACHE_ID}" ]]; then
             selected=$((selected + 1))
             github='.velnor-proof/barrier/github/build-output'
             velnor='.velnor-proof/barrier/velnor/build-output'
-            for root in "${github}" "${velnor}"; do
-              test -f "${root}/cache.tar" -a -f "${root}/archive.sha256" -a -f "${root}/manifest.sha256" -a -f "${root}/hit"
-              test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
-            done
+            verify_evidence "${github}" github 'build-output'
+            verify_evidence "${velnor}" velnor 'build-output'
             test "$(cat "${github}/archive.sha256")" = "$(cat "${velnor}/archive.sha256")"
+            test "$(cat "${github}/manifest.sha256")" = "$(cat "${velnor}/manifest.sha256")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               github_hit="$(cat "${github}/hit")"; velnor_hit="$(cat "${velnor}/hit")"
               if [[ "${CACHE_TEMPERATURE}" == cold ]]; then
@@ -1128,48 +1209,150 @@ jobs:
       - name: Check out repository into fresh workspace
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download github tools restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-tools-${{ github.run_id }}
           path: .velnor-proof/execute/github/tools
       - name: Verify and materialize github tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/github/tools'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'github' 'tools'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'github:tools:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download github dependencies restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-dependencies-${{ github.run_id }}
           path: .velnor-proof/execute/github/dependencies
       - name: Verify and materialize github dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/github/dependencies'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'github' 'dependencies'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'github:dependencies:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download github build-output restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-github-build-output-${{ github.run_id }}
           path: .velnor-proof/execute/github/build-output
       - name: Verify and materialize github build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/github/build-output'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'github' 'build-output'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'github:build-output:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Set up mise toolchain
@@ -1218,7 +1401,7 @@ jobs:
             "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
       - name: Package github tools post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1228,18 +1411,26 @@ jobs:
           destination='.velnor-proof/post/github/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Package github dependencies post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1249,18 +1440,26 @@ jobs:
           destination='.velnor-proof/post/github/dependencies'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'github' > "${destination}/lane"
       - name: Package github build-output post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1270,12 +1469,20 @@ jobs:
           destination='.velnor-proof/post/github/build-output'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in 'target' '**/target'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
@@ -1309,48 +1516,150 @@ jobs:
       - name: Check out repository into fresh workspace
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download velnor tools restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-tools-${{ github.run_id }}
           path: .velnor-proof/execute/velnor/tools
       - name: Verify and materialize velnor tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/velnor/tools'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'velnor' 'tools'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'velnor:tools:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download velnor dependencies restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-dependencies-${{ github.run_id }}
           path: .velnor-proof/execute/velnor/dependencies
       - name: Verify and materialize velnor dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/velnor/dependencies'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'velnor' 'dependencies'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'velnor:dependencies:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Download velnor build-output restore artifact
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: proof-restore-velnor-build-output-${{ github.run_id }}
           path: .velnor-proof/execute/velnor/build-output
       - name: Verify and materialize velnor build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
           root='.velnor-proof/execute/velnor/build-output'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence "${root}" 'velnor' 'build-output'
           tar -xf "${root}/cache.tar" -C .
           printf '%s\n' 'velnor:build-output:${{ matrix.slot }}' > "${root}/materialization-id"
       - name: Set up mise toolchain
@@ -1399,7 +1708,7 @@ jobs:
             "${PROOF_LANE}" "${PROOF_SLOT}" "${cpu_ms}" "${peak_kib}" "${disk_bytes}" "${psi_cpu}" "${disk_bytes}" "${correlation}" \
             > ".velnor-proof/metrics/${PROOF_LANE}-${PROOF_SLOT}.json"
       - name: Package velnor tools post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1409,18 +1718,26 @@ jobs:
           destination='.velnor-proof/post/velnor/tools'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cache/mise' '.local/share/mise/installs'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'tools' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Package velnor dependencies post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1430,18 +1747,26 @@ jobs:
           destination='.velnor-proof/post/velnor/dependencies'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'dependencies' > "${destination}/cache-id"
           printf '%s\n' 'velnor' > "${destination}/lane"
       - name: Package velnor build-output post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
         shell: bash
         env:
           CACHE_HIT: post
@@ -1451,12 +1776,20 @@ jobs:
           destination='.velnor-proof/post/velnor/build-output'
           rm -rf -- "${destination}"
           mkdir -p -- "${destination}"
-          : > "${destination}/files.list"
+          : > "${destination}/files.nul"
           for root in 'target' '**/target'; do
-            if [[ -e "${root}" ]]; then find "${root}" -type f -print; fi
-          done | LC_ALL=C sort -u > "${destination}/files.list"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar" -T "${destination}/files.list"
-          sha256sum "${destination}/files.list" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+            if [[ -e "${root}" ]]; then find "${root}" -type f -print0; fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            printf '%s %s %s\n' "${mode}" "${digest}" "${encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
           sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
           printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
           printf '%s\n' 'build-output' > "${destination}/cache-id"
@@ -1486,18 +1819,134 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download deterministic GitHub post-state
+      - name: Download every lane and slot post-state
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: proof-post-github-${{ github.run_id }}-0
+          pattern: proof-post-*-${{ github.run_id }}-*
           path: .velnor-proof/publish
+          merge-multiple: false
+      - name: Verify exact post-state set and lane equality
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          FANOUT: ${{ inputs.benchmark_fanout != '' && inputs.benchmark_fanout || '1' }}
+        run: |
+          set -euo pipefail
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
+          [[ "${FANOUT}" =~ ^(1|8)$ ]]
+          expected=$((FANOUT * 2))
+          actual=$(find .velnor-proof/publish -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          [[ "${actual}" == "${expected}" ]]
+          for ((slot=0; slot<FANOUT; slot++)); do
+            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/tools"
+            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/tools"
+            verify_evidence "${github}" github 'tools'
+            verify_evidence "${velnor}" velnor 'tools'
+            [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
+            [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            if (( slot > 0 )); then
+              baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/tools"
+              [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+            fi
+          done
+          for ((slot=0; slot<FANOUT; slot++)); do
+            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/dependencies"
+            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/dependencies"
+            verify_evidence "${github}" github 'dependencies'
+            verify_evidence "${velnor}" velnor 'dependencies'
+            [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
+            [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            if (( slot > 0 )); then
+              baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/dependencies"
+              [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+            fi
+          done
+          for ((slot=0; slot<FANOUT; slot++)); do
+            github=".velnor-proof/publish/proof-post-github-${RUN_ID}-${slot}/post/github/build-output"
+            velnor=".velnor-proof/publish/proof-post-velnor-${RUN_ID}-${slot}/post/velnor/build-output"
+            verify_evidence "${github}" github 'build-output'
+            verify_evidence "${velnor}" velnor 'build-output'
+            [[ "$(cat "${github}/archive.sha256")" == "$(cat "${velnor}/archive.sha256")" ]]
+            [[ "$(cat "${github}/manifest.sha256")" == "$(cat "${velnor}/manifest.sha256")" ]]
+            if (( slot > 0 )); then
+              baseline=".velnor-proof/publish/proof-post-github-${RUN_ID}-0/post/github/build-output"
+              [[ "$(cat "${github}/archive.sha256")" == "$(cat "${baseline}/archive.sha256")" ]]
+            fi
+          done
       - name: Materialize deterministic tools post-state
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
         shell: bash
         run: |
           set -euo pipefail
-          root='.velnor-proof/publish/post/github/tools'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
+          root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/tools'
+          verify_evidence "${root}" github 'tools'
           tar -xf "${root}/cache.tar" -C .
       - name: Publish tools exactly once
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
@@ -1512,8 +1961,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          root='.velnor-proof/publish/post/github/dependencies'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
+          root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/dependencies'
+          verify_evidence "${root}" github 'dependencies'
           tar -xf "${root}/cache.tar" -C .
       - name: Publish dependencies exactly once
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'dependencies' }}
@@ -1530,8 +2013,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          root='.velnor-proof/publish/post/github/build-output'
-          test "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" = "$(cat "${root}/archive.sha256")"
+          verify_evidence() {
+            local root="$1" expected_lane="$2" expected_id="$3" required
+            for required in cache.tar archive.sha256 manifest.txt manifest.sha256 hit cache-id lane; do
+              [[ -f "${root}/${required}" && ! -L "${root}/${required}" ]] || return 1
+            done
+            [[ "$(cat "${root}/cache-id")" == "${expected_id}" ]]
+            [[ "$(cat "${root}/lane")" == "${expected_lane}" ]]
+            [[ "$(sha256sum "${root}/cache.tar" | cut -d' ' -f1)" == "$(cat "${root}/archive.sha256")" ]]
+            [[ "$(sha256sum "${root}/manifest.txt" | cut -d' ' -f1)" == "$(cat "${root}/manifest.sha256")" ]]
+            local scratch="${root}.verified" mode digest encoded extra path actual_mode
+            rm -rf -- "${scratch}"
+            mkdir -p -- "${scratch}/tree"
+            : > "${scratch}/expected"
+            while read -r mode digest encoded extra; do
+              [[ -z "${extra}" && "${mode}" =~ ^[0-7]{3,4}$ && "${digest}" =~ ^[0-9a-f]{64}$ && -n "${encoded}" ]]
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ "$(printf '%s' "${path}" | openssl base64 -A)" == "${encoded}" ]]
+              [[ -n "${path}" && "${path}" != /* && "${path}" != *$'\n'* && "/${path}/" != */../* ]]
+              printf '%s\n' "${path}" >> "${scratch}/expected"
+            done < "${root}/manifest.txt"
+            LC_ALL=C sort -u -o "${scratch}/expected" "${scratch}/expected"
+            [[ "$(wc -l < "${root}/manifest.txt" | tr -d ' ')" == "$(wc -l < "${scratch}/expected" | tr -d ' ')" ]]
+            tar -tf "${root}/cache.tar" | LC_ALL=C sort -u > "${scratch}/actual"
+            diff -u "${scratch}/expected" "${scratch}/actual"
+            tar -xf "${root}/cache.tar" -C "${scratch}/tree"
+            while read -r mode digest encoded extra; do
+              path="$(printf '%s' "${encoded}" | openssl base64 -d -A)"
+              [[ -f "${scratch}/tree/${path}" && ! -L "${scratch}/tree/${path}" ]]
+              actual_mode="$(stat -c '%a' -- "${scratch}/tree/${path}" 2>/dev/null || stat -f '%Lp' -- "${scratch}/tree/${path}")"
+              [[ "${actual_mode}" == "${mode}" ]]
+              [[ "$(sha256sum -- "${scratch}/tree/${path}" | cut -d' ' -f1)" == "${digest}" ]]
+            done < "${root}/manifest.txt"
+            rm -rf -- "${scratch}"
+          }
+          root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/build-output'
+          verify_evidence "${root}" github 'build-output'
           tar -xf "${root}/cache.tar" -C .
       - name: Publish build-output exactly once
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'build-output' }}

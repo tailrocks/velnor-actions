@@ -419,7 +419,7 @@ fn generated_cache_proof_dag_is_evidence_bearing_and_single_writer() {
     }
     assert!(workflow.contains("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"));
     assert!(workflow.contains("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"));
-    assert!(workflow.contains("tar --sort=name --mtime='@0' --owner=0 --group=0"));
+    assert!(workflow.contains("--sort=name --mtime='@0' --owner=0 --group=0"));
     assert!(workflow.contains("sha256sum"));
     assert!(workflow.contains("slot: ${{ fromJSON(inputs.benchmark_fanout == '8'"));
     assert!(workflow.contains("cache_restore_ms"));
@@ -479,4 +479,53 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("CACHE_PUBLISH", "success"),
     ]));
     assert!(!run_proof_contract(&[("TEMPERATURE", "cold")]));
+}
+
+fn run_evidence_verifier(tamper: &str) -> bool {
+    let root = common::temp_dir("evidence-verifier");
+    let script = format!(
+        r#"set -euo pipefail
+mkdir -p source/cache evidence
+printf 'bound payload\n' > source/cache/payload
+chmod 640 source/cache/payload
+digest="$(sha256sum source/cache/payload | cut -d' ' -f1)"
+encoded="$(printf '%s' cache/payload | openssl base64 -A)"
+printf '640 %s %s\n' "${{digest}}" "${{encoded}}" > evidence/manifest.txt
+(cd source && tar -cf ../evidence/cache.tar cache/payload)
+sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256
+sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256
+printf 'false\n' > evidence/hit
+printf 'tools\n' > evidence/cache-id
+printf 'github\n' > evidence/lane
+{tamper}
+{verifier}
+verify_evidence evidence github tools
+"#,
+        verifier = velnor_actions_generator::render::EVIDENCE_VERIFIER,
+    );
+    std::process::Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .current_dir(root)
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn immutable_evidence_verifier_rejects_content_identity_and_set_tampering() {
+    assert!(run_evidence_verifier(":"));
+    assert!(!run_evidence_verifier(
+        "printf 'other payload\\n' > source/cache/payload; (cd source && tar -cf ../evidence/cache.tar cache/payload); sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256"
+    ));
+    assert!(!run_evidence_verifier(
+        "sed -i 's/^640 /600 /' evidence/manifest.txt; sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256"
+    ));
+    assert!(!run_evidence_verifier(
+        "cp evidence/manifest.txt duplicate-line; cat duplicate-line >> evidence/manifest.txt; sha256sum evidence/manifest.txt | cut -d' ' -f1 > evidence/manifest.sha256"
+    ));
+    assert!(!run_evidence_verifier(
+        "printf extra > source/extra; (cd source && tar -rf ../evidence/cache.tar extra); sha256sum evidence/cache.tar | cut -d' ' -f1 > evidence/archive.sha256"
+    ));
+    assert!(!run_evidence_verifier("printf 'velnor\\n' > evidence/lane"));
 }
