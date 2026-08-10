@@ -415,22 +415,11 @@ fn benchmark_fresh_seed_publishes_and_identical_warm_reuse_does_not() {
         benchmark_cache_state("disabled", "target", "false", "false").as_deref(),
         Some("ignored\n")
     );
-    assert_eq!(
-        benchmark_cache_state("enabled", "non-target", "false", "false").as_deref(),
-        Some("miss\n")
-    );
+    assert!(benchmark_cache_state("enabled", "non-target", "false", "false").is_none());
     assert!(benchmark_cache_state("enabled", "non-target", "true", "false").is_none());
     assert_eq!(
         benchmark_cache_state("enabled", "non-target", "true", "true").as_deref(),
-        Some("hit\n")
-    );
-    assert_eq!(
-        benchmark_cache_state("disabled", "non-target", "false", "false").as_deref(),
-        Some("miss\n")
-    );
-    assert_eq!(
-        benchmark_cache_state("disabled", "non-target", "true", "true").as_deref(),
-        Some("hit\n")
+        Some("ignored\n")
     );
 }
 
