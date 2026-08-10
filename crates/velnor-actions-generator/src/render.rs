@@ -621,7 +621,7 @@ fn render_cache_proof_jobs(
             // non-target cache state and disable only the selected cache.
             let selected = "${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}";
             let restore_selected = format!(
-                "${{{{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != '{id}' || inputs.benchmark_cache_mode != 'disabled') }}}}"
+                "${{{{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != '{id}' || inputs.benchmark_cache_mode != 'disabled') }}}}"
             );
             if lane == "velnor" {
                 b.line(6, &format!("- name: Capture {id} proof authority"));
@@ -1038,9 +1038,12 @@ fn render_cache_proof_jobs(
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
     b.line(6, "- proof_reconcile");
-    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
+    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && inputs.cache_temperature == 'cold' && (inputs.cache_proof_id != '' || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 20");
+    b.line(4, "concurrency:");
+    b.line(6, "group: velnor-cache-publisher-${{ github.repository }}");
+    b.line(6, "cancel-in-progress: false");
     b.line(4, "steps:");
     b.line(6, "- name: Check out repository");
     b.line(
@@ -1113,6 +1116,37 @@ fn render_cache_proof_jobs(
             ),
         );
         b.run_block(8, PUBLISHER_METRICS_SCRIPT);
+        b.line(
+            6,
+            &format!("- name: Clean {id} publication verification destination"),
+        );
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.run_block(8, &clean_cache_script(cache));
+        b.line(6, &format!("- name: Restore published {id} identity"));
+        b.line(8, &format!("id: verify-publish-{id}"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(
+            8,
+            &format!("uses: actions/cache/restore@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
+        );
+        cache_action_with(b, contract.class, cache, false);
+        b.line(6, &format!("- name: Verify published {id} bytes"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.line(8, "env:");
+        b.line(
+            10,
+            &format!("CACHE_HIT: ${{{{ steps.verify-publish-{id}.outputs.cache-hit }}}}"),
+        );
+        b.line(10, "RESTORE_STARTED_MS: 0");
+        b.line(10, "RESTORE_FINISHED_MS: 0");
+        b.line(10, "CACHE_LOCK_WAIT_MS: 0");
+        let verify_script = format!(
+            "{}\n[[ \"${{CACHE_HIT}}\" == true ]]\nsource_root='.velnor-proof/publish/proof-post-github-${{{{ github.run_id }}}}-0/post/github/{id}'\nverified_root='.velnor-proof/publish-verify/github/{id}'\n[[ \"$(cat \"${{source_root}}/archive.sha256\")\" == \"$(cat \"${{verified_root}}/archive.sha256\")\" ]]\n[[ \"$(cat \"${{source_root}}/manifest.sha256\")\" == \"$(cat \"${{verified_root}}/manifest.sha256\")\" ]]",
+            package_cache_script(cache, "github", "publish-verify")
+        );
+        b.run_block(8, &verify_script);
     }
     b.line(6, "- name: Upload measured publisher metrics");
     b.line(
@@ -1576,7 +1610,7 @@ for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GI
   [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
 done
 publish_expected=false
-[[ "${TEMPERATURE}" == cold || "${BENCHMARK_MODE}" == enabled ]] && publish_expected=true
+[[ "${TEMPERATURE}" == cold && ( -z "${BENCHMARK_MODE}" || "${BENCHMARK_MODE}" == enabled ) ]] && publish_expected=true
 if ${publish_expected}; then
   [[ "${CACHE_PUBLISH}" == success ]] || { echo "cold/enabled proof publisher did not succeed" >&2; exit 1; }
 else

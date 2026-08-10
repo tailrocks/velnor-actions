@@ -571,7 +571,7 @@ jobs:
           awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore tools without saving
         id: restore-tools
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -745,7 +745,7 @@ jobs:
           awk '{printf "monotonic_ms=%d\n", $1 * 1000}' /proc/uptime >> "${GITHUB_OUTPUT}"
       - name: Restore tools without saving
         id: restore-tools
-        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.cache_proof_id == '' || inputs.cache_temperature != 'cold') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
+        if: ${{ (inputs.cache_proof_id != '' || inputs.benchmark_campaign != '') && (inputs.benchmark_campaign == '' || inputs.benchmark_cache_id != 'tools' || inputs.benchmark_cache_mode != 'disabled') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -1780,9 +1780,12 @@ jobs:
       - github_execute
       - velnor_execute
       - proof_reconcile
-    if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}
+    if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && inputs.cache_temperature == 'cold' && (inputs.cache_proof_id != '' || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: velnor-cache-publisher-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1903,6 +1906,91 @@ jobs:
             .cache_lock_wait_source == "not-applicable-github" and .cache_lock_wait_ms == 0 and
             ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
           ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
+      - name: Clean tools publication verification destination
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
+      - name: Restore published tools identity
+        id: verify-publish-tools
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/mise
+            .local/share/mise/installs
+          key: ci-v${{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}/fixture/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+      - name: Verify published tools bytes
+        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == 'tools' }}
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.verify-publish-tools.outputs.cache-hit }}
+          RESTORE_STARTED_MS: 0
+          RESTORE_FINISHED_MS: 0
+          CACHE_LOCK_WAIT_MS: 0
+        run: |
+          set -euo pipefail
+          safe_link_target() {
+            local base="$1" target="$2" component; local -a stack=(workspace) parts
+            IFS=/ read -ra parts <<<"${base}/${target}"
+            for component in "${parts[@]}"; do
+              case "${component}" in ''|.) ;; ..) (( ${#stack[@]} > 1 )) || return 1; unset 'stack[-1]' ;; *) stack+=("${component}") ;; esac
+            done
+          }
+          shopt -s globstar nullglob
+          destination='.velnor-proof/publish-verify/github/tools'
+          rm -rf -- "${destination}"
+          mkdir -p -- "${destination}"
+          : > "${destination}/files.nul"
+          for root in '.cache/mise' '.local/share/mise/installs'; do
+            if [[ -e "${root}" || -L "${root}" ]]; then
+              find "${root}" \( -type f -o -type l -o \( -type d -empty \) \) -print0
+            fi
+          done | LC_ALL=C sort -zu > "${destination}/files.nul"
+          : > "${destination}/manifest.txt"
+          while IFS= read -r -d '' file; do
+            [[ "${file}" != *$'\n'* && "${file}" != /* && "/${file}/" != */../* ]] || { echo 'unsafe cache path' >&2; exit 1; }
+            mode="$(stat -c '%a' -- "${file}" 2>/dev/null || stat -f '%Lp' -- "${file}")"
+            encoded="$(printf '%s' "${file}" | openssl base64 -A)"
+            if [[ -L "${file}" ]]; then
+              kind=l; target="$(readlink -- "${file}")"
+              [[ -n "${target}" && "${target}" != /* && "${target}" != *$'\n'* ]] || { echo 'unsafe cache symlink target' >&2; exit 1; }
+              safe_link_target "$(dirname -- "${file}")" "${target}" || { echo 'escaping cache symlink target' >&2; exit 1; }
+              digest="$(printf '%s' "${target}" | sha256sum | cut -d' ' -f1)"
+              target_encoded="$(printf '%s' "${target}" | openssl base64 -A)"
+            elif [[ -f "${file}" ]]; then
+              kind=f; digest="$(sha256sum -- "${file}" | cut -d' ' -f1)"; target_encoded=-
+            elif [[ -d "${file}" ]]; then
+              kind=d; digest="$(printf '' | sha256sum | cut -d' ' -f1)"; target_encoded=-
+            else
+              echo 'unsupported cache entry type' >&2; exit 1
+            fi
+            printf '%s %s %s %s %s\n' "${kind}" "${mode}" "${digest}" "${encoded}" "${target_encoded}"
+          done < "${destination}/files.nul" | LC_ALL=C sort > "${destination}/manifest.txt"
+          tar --null --no-recursion --files-from="${destination}/files.nul" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "${destination}/cache.tar"
+          sha256sum "${destination}/manifest.txt" | cut -d' ' -f1 > "${destination}/manifest.sha256"
+          sha256sum "${destination}/cache.tar" | cut -d' ' -f1 > "${destination}/archive.sha256"
+          restore_started="${RESTORE_STARTED_MS-0}"; restore_finished="${RESTORE_FINISHED_MS-0}"
+          for value in "${restore_started}" "${restore_finished}"; do [[ "${value}" =~ ^[0-9]+$ ]]; done
+          (( restore_finished >= restore_started ))
+          printf '%s\n' "$((restore_finished - restore_started))" > "${destination}/restore-ms"
+          [[ "${CACHE_LOCK_WAIT_MS}" =~ ^[0-9]+$ ]]
+          printf '%s\n' "${CACHE_LOCK_WAIT_MS}" > "${destination}/lock-wait-ms"
+          stat -c '%s' -- "${destination}/cache.tar" > "${destination}/cache-bytes"
+          wc -l < "${destination}/manifest.txt" | tr -d ' ' > "${destination}/cache-files"
+          if [[ "${CACHE_HIT}" == true ]]; then printf 'exact\n'; else printf 'miss\n'; fi > "${destination}/hit-source"
+          printf '%s\n' '-1' > "${destination}/age-seconds"
+          printf '%s\n' 'unknown' > "${destination}/eviction-risk"
+          printf '%s\n' "${CACHE_HIT}" > "${destination}/hit"
+          printf '%s\n' 'tools' > "${destination}/cache-id"
+          printf '%s\n' 'github' > "${destination}/lane"
+          [[ "${CACHE_HIT}" == true ]]
+          source_root='.velnor-proof/publish/proof-post-github-${{ github.run_id }}-0/post/github/tools'
+          verified_root='.velnor-proof/publish-verify/github/tools'
+          [[ "$(cat "${source_root}/archive.sha256")" == "$(cat "${verified_root}/archive.sha256")" ]]
+          [[ "$(cat "${source_root}/manifest.sha256")" == "$(cat "${verified_root}/manifest.sha256")" ]]
       - name: Upload measured publisher metrics
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -1946,7 +2034,7 @@ jobs:
             [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
           done
           publish_expected=false
-          [[ "${TEMPERATURE}" == cold || "${BENCHMARK_MODE}" == enabled ]] && publish_expected=true
+          [[ "${TEMPERATURE}" == cold && ( -z "${BENCHMARK_MODE}" || "${BENCHMARK_MODE}" == enabled ) ]] && publish_expected=true
           if ${publish_expected}; then
             [[ "${CACHE_PUBLISH}" == success ]] || { echo "cold/enabled proof publisher did not succeed" >&2; exit 1; }
           else

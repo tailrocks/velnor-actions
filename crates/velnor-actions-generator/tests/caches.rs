@@ -615,7 +615,12 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("BENCHMARK_MODE", "disabled"),
         ("CACHE_PUBLISH", "success"),
     ]));
+    assert!(!run_proof_contract(&[
+        ("BENCHMARK_MODE", "enabled"),
+        ("CACHE_PUBLISH", "success"),
+    ]));
     assert!(run_proof_contract(&[
+        ("TEMPERATURE", "cold"),
         ("BENCHMARK_MODE", "enabled"),
         ("CACHE_PUBLISH", "success"),
     ]));
@@ -653,6 +658,34 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
     let condition = publisher["if"].as_str().unwrap();
     assert!(condition.contains("inputs.cache_temperature == 'cold'"));
     assert!(condition.contains("inputs.benchmark_cache_mode == 'enabled'"));
+    assert!(condition.contains("inputs.cache_temperature == 'cold' && ("));
+    assert_eq!(
+        publisher["concurrency"]["group"].as_str(),
+        Some("velnor-cache-publisher-${{ github.repository }}")
+    );
+    assert_eq!(
+        publisher["concurrency"]["cancel-in-progress"].as_bool(),
+        Some(false)
+    );
+    for lane in ["github_restore", "velnor_restore"] {
+        let restore = jobs[lane]["steps"]
+            .as_vec()
+            .unwrap()
+            .iter()
+            .find(|step| step["name"].as_str() == Some("Restore dependencies without saving"))
+            .unwrap();
+        assert!(
+            !restore["if"]
+                .as_str()
+                .unwrap()
+                .contains("cache_temperature")
+        );
+    }
+    assert!(
+        publisher["steps"].as_vec().unwrap().iter().any(|step| {
+            step["name"].as_str() == Some("Restore published dependencies identity")
+        })
+    );
     assert!(!condition.contains("inputs.cache_temperature == 'warm'"));
     let save_steps = publisher["steps"]
         .as_vec()
