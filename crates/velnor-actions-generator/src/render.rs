@@ -1352,6 +1352,13 @@ fn cache_action_with(
     cache: &CacheDeclaration,
     include_restore_prefix: bool,
 ) {
+    // A/B cohorts give only the selected target a fresh generation. Every
+    // non-target cache inherits the stable production namespace so its warm
+    // state can be proven without pre-populating the fresh target identity.
+    let namespace = format!(
+        "${{{{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != '{}' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}}}",
+        cache.id
+    );
     b.line(8, "with:");
     b.line(10, "path: |");
     for path in &cache.paths {
@@ -1367,7 +1374,7 @@ fn cache_action_with(
     b.line(
         10,
         &format!(
-            "key: ${{{{ needs.validate-request.outputs.cache_namespace }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{phase}",
+            "key: {namespace}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{phase}",
             class.code(), cache.id
         ),
     );
@@ -1376,7 +1383,7 @@ fn cache_action_with(
         b.line(
             12,
             &format!(
-                "${{{{ needs.validate-request.outputs.cache_namespace }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
+                "{namespace}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
                 class.code(), cache.id
             ),
         );

@@ -421,6 +421,30 @@ fn benchmark_fresh_seed_publishes_and_identical_warm_reuse_does_not() {
         benchmark_cache_state("enabled", "non-target", "true", "true").as_deref(),
         Some("ignored\n")
     );
+
+    let contract = load();
+    let manifest =
+        velnor_actions_generator::model::FleetManifest::load(&common::repo_root()).unwrap();
+    let workflow = velnor_actions_generator::render::callable_workflow(
+        manifest.class(RepositoryClass::Code),
+        &contract,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    for cache in contract
+        .declarations()
+        .iter()
+        .filter(|cache| cache.class == RepositoryClass::Code)
+    {
+        let selector = format!(
+            "inputs.benchmark_cache_id != '{}' && 'ci-v1' || needs.validate-request.outputs.cache_namespace",
+            cache.id
+        );
+        assert!(
+            workflow.contains(&selector),
+            "missing A/B namespace split for {}",
+            cache.id
+        );
+    }
 }
 
 #[test]

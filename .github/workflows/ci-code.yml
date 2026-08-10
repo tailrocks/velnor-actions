@@ -896,7 +896,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'tools' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Record tools restore boundary
         id: restore-timing-tools
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -999,7 +999,7 @@ jobs:
             .cargo/registry
             .gradle/caches
             **/node_modules
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'dependencies' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Record dependencies restore boundary
         id: restore-timing-dependencies
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1100,7 +1100,7 @@ jobs:
           path: |
             target
             **/target
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'build-output' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Record build-output restore boundary
         id: restore-timing-build-output
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1278,7 +1278,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'tools' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Record tools restore boundary
         id: restore-timing-tools
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1439,7 +1439,7 @@ jobs:
             .cargo/registry
             .gradle/caches
             **/node_modules
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'dependencies' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Record dependencies restore boundary
         id: restore-timing-dependencies
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1598,7 +1598,7 @@ jobs:
           path: |
             target
             **/target
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'build-output' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Record build-output restore boundary
         id: restore-timing-build-output
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -3381,7 +3381,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'tools' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Reject existing tools publication identity
         if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
@@ -3481,7 +3481,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'tools' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Record measured tools publisher metrics
         if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
@@ -3524,7 +3524,7 @@ jobs:
           path: |
             .cache/mise
             .local/share/mise/installs
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'tools' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Verify published tools bytes
         if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
@@ -3611,7 +3611,7 @@ jobs:
             .cargo/registry
             .gradle/caches
             **/node_modules
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'dependencies' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Reject existing dependencies publication identity
         if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
@@ -3713,7 +3713,7 @@ jobs:
             .cargo/registry
             .gradle/caches
             **/node_modules
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'dependencies' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Record measured dependencies publisher metrics
         if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
@@ -3758,7 +3758,7 @@ jobs:
             .cargo/registry
             .gradle/caches
             **/node_modules
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'dependencies' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Verify published dependencies bytes
         if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
@@ -3843,7 +3843,7 @@ jobs:
           path: |
             target
             **/target
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'build-output' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Reject existing build-output publication identity
         if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
@@ -3943,7 +3943,7 @@ jobs:
           path: |
             target
             **/target
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'build-output' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Record measured build-output publisher metrics
         if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
@@ -3986,7 +3986,7 @@ jobs:
           path: |
             target
             **/target
-          key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          key: ${{ inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode != 'normal' && inputs.benchmark_cache_id != 'build-output' && 'ci-v1' || needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Verify published build-output bytes
         if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
