@@ -343,19 +343,19 @@ fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
         ),
         (
             ".github/workflows/ci-code.yml",
-            "3b3e7c913e101ee8b596d33de4ea142a2f6ca39cdd0a21aa854932eadc9eb58b",
+            "c12a631a54fc7903233f66fdb85df7509c37767d17644d8cde4b47be8644fcae",
         ),
         (
             ".github/workflows/ci-tap.yml",
-            "984e3d83c6f1b4ef655f212ee997b5dcce5b53c1620223c8f16e525ce6143411",
+            "9c606bcffb06ebffd8e65221ab3157b095d309ab12b061d50b6c42498558a277",
         ),
         (
             ".github/workflows/ci-apt.yml",
-            "3fd1bbf407c62a6c45ba7672cc951e1c8d9af0ff17e9faa8a23db79d7f394b39",
+            "f5916bae54cad48dd1d40c6b62f01422ac080df77671b8630ebb7683e77a13a7",
         ),
         (
             ".github/workflows/ci-fixture.yml",
-            "d3f0d602bbff307f9a1c652bc5ba972dd4c17dfe9ab2cff8a79124ced89fb29f",
+            "e3b06086e6a58bae7ddfe1f6bf574431971a9ec3dbcc13995684ba1d16a12695",
         ),
     ] {
         let bytes = std::fs::read(root.join(path)).unwrap();

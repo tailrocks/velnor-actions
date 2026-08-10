@@ -2090,7 +2090,7 @@ if [[ -n "${RECOVERY_PROOF_ID}" ]]; then
   gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq ".id == ${RUN_ID} and .event == \"workflow_dispatch\" and .head_sha == \"${HEAD_SHA}\" and .display_title == \"CI recovery ${RECOVERY_PROOF_ID}\"" | grep -qx true || fail "allocated run does not bind recovery marker and head"
   duplicate_count="$(gh api --paginate --slurp "repos/${REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=100" | jq --arg title "CI recovery ${RECOVERY_PROOF_ID}" --arg head "${HEAD_SHA}" 'map(.workflow_runs[]) | map(select(.display_title == $title and .head_sha == $head)) | length')"
   [[ "${duplicate_count}" == "1" ]] || fail "duplicate or unknown recovery operation"
-  [[ -z "${BENCHMARK_CAMPAIGN}${CACHE_PROOF_ID}" ]] || fail "recovery cannot combine with another operation"
+  [[ -z "${BENCHMARK_CAMPAIGN}${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_PROOF_ID}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "recovery cannot combine with foreign operation fields"
   correlation="${RECOVERY_PROOF_ID}"
 elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
   protected_dispatch
@@ -2108,6 +2108,7 @@ elif [[ -n "${CACHE_PROOF_ID}" ]]; then
   is_id "${CACHE_PROOF_ID}" || fail "invalid cache proof id"
   [[ "${CACHE_GENERATION}" =~ ^(1|2)$ ]] || fail "unknown cache generation"
   [[ "${CACHE_TEMPERATURE}" =~ ^(cold|warm)$ ]] || fail "unknown cache temperature"
+  [[ -z "${BENCHMARK_CAMPAIGN}${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}" ]] || fail "cache proof cannot combine with benchmark fields"
   correlation="${CACHE_PROOF_ID}:${CACHE_GENERATION}:${CACHE_TEMPERATURE}"
 else
   [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"

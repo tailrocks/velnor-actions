@@ -397,6 +397,62 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
 }
 
 #[test]
+fn operation_input_domains_reject_every_foreign_field() {
+    let bin = fake_recovery_gh();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let protected = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
+    ];
+
+    let mut cache_proof = protected.to_vec();
+    cache_proof.extend([
+        ("CACHE_PROOF_ID", "cache-proof-0001"),
+        ("CACHE_GENERATION", "1"),
+        ("CACHE_TEMPERATURE", "cold"),
+    ]);
+    assert!(run_request_validator(&cache_proof));
+    for foreign in [
+        ("BENCHMARK_CAMPAIGN", "campaign-0001"),
+        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_CACHE_ID", "tools"),
+        ("BENCHMARK_CACHE_MODE", "enabled"),
+        ("BENCHMARK_FANOUT", "1"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+    ] {
+        let mut mixed = cache_proof.clone();
+        mixed.push(foreign);
+        assert!(!run_request_validator(&mixed), "accepted {foreign:?}");
+    }
+
+    let recovery = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "branch"),
+        ("RECOVERY_PROOF_ID", "recovery-operation-0001"),
+    ];
+    assert!(run_request_validator(&recovery));
+    for foreign in [
+        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_CACHE_ID", "tools"),
+        ("BENCHMARK_CACHE_MODE", "enabled"),
+        ("BENCHMARK_FANOUT", "1"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+        ("CACHE_GENERATION", "1"),
+        ("CACHE_TEMPERATURE", "cold"),
+    ] {
+        let mut mixed = recovery.to_vec();
+        mixed.push(foreign);
+        assert!(!run_request_validator(&mixed), "accepted {foreign:?}");
+    }
+}
+
+#[test]
 fn parsed_workflows_bind_recovery_permissions_and_unmerged_cache_isolation() {
     let contract = velnor_actions_generator::cache::CacheContract::load(
         &common::repo_root().join("fleet").join("caches.toml"),
