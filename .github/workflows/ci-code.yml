@@ -201,9 +201,11 @@ jobs:
           else
             [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"
           fi
-          printf 'correlation=%s\n' "${correlation}" >> "${GITHUB_OUTPUT}"
-          printf 'workflow_blob=%s\n' "${workflow_blob}" >> "${GITHUB_OUTPUT}"
-          printf 'cache_namespace=%s\n' "${cache_namespace}" >> "${GITHUB_OUTPUT}"
+          {
+            printf 'correlation=%s\n' "${correlation}"
+            printf 'workflow_blob=%s\n' "${workflow_blob}"
+            printf 'cache_namespace=%s\n' "${cache_namespace}"
+          } >> "${GITHUB_OUTPUT}"
 
   velnor-lane:
     name: velnor lane
@@ -215,7 +217,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'ubuntu-latest' || 'velnor-trusted' }}
     timeout-minutes: 30
     concurrency:
-      group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}
+      group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}
       cancel-in-progress: false
     outputs:
       contract: ${{ steps.aggregate.outputs.contract }}
@@ -631,7 +633,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: velnor-cache-writer-github-${{ github.repository }}
+      group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}
       cancel-in-progress: false
     outputs:
       contract: ${{ steps.aggregate.outputs.contract }}
@@ -1693,6 +1695,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       publish_needed: ${{ steps.barrier.outputs.publish_needed }}
+      publish_tools: ${{ steps.barrier.outputs.publish_tools }}
+      publish_dependencies: ${{ steps.barrier.outputs.publish_dependencies }}
+      publish_build_output: ${{ steps.barrier.outputs.publish_build_output }}
     steps:
       - name: Download github tools restore evidence
         if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_campaign != '' }}
@@ -1822,17 +1827,24 @@ jobs:
               *) return 1 ;;
             esac
           }
-          benchmark_publish_needed() {
-            local mode="$1" hits="$2" misses="$3"
-            [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${hits}" =~ ^[0-9]+$ && "${misses}" =~ ^[0-9]+$ ]]
-            (( hits == 0 || misses == 0 )) || return 1
-            if [[ "${mode}" != disabled && "${misses}" -gt 0 ]]; then printf 'true\n'; else printf 'false\n'; fi
+          benchmark_cache_state() {
+            local mode="$1" role="$2" github_hit="$3" velnor_hit="$4"
+            [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${role}" =~ ^(target|non-target)$ ]]
+            [[ "${github_hit}" == "${velnor_hit}" ]]
+            if [[ "${mode}" == normal || ( "${mode}" == enabled && "${role}" == target ) ]]; then
+              if [[ "${github_hit}" == true ]]; then printf 'hit\n'; else printf 'miss\n'; fi
+            elif [[ "${mode}" == disabled && "${role}" == target ]]; then
+              [[ "${github_hit}" != true ]]; printf 'ignored\n'
+            else
+              [[ "${github_hit}" == true ]]; printf 'ignored\n'
+            fi
           }
           selected=0
-          benchmark_hits=0
-          benchmark_misses=0
           publish_needed=false
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'tools' ]]; then
+          TOOLS_publish=false
+          DEPENDENCIES_publish=false
+          BUILD_OUTPUT_publish=false
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_MODE}" ]]; then
             selected=$((selected + 1))
             for identity in "${TOOLS_github_ARTIFACT_ID}" "${TOOLS_velnor_ARTIFACT_ID}"; do [[ "${identity}" =~ ^[1-9][0-9]*$ ]]; done
             for digest in "${TOOLS_github_ARTIFACT_DIGEST}" "${TOOLS_velnor_ARTIFACT_DIGEST}"; do [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; done
@@ -1847,12 +1859,14 @@ jobs:
             velnor_hit="$(cat "${velnor}/hit")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               verify_cache_temperature "${CACHE_TEMPERATURE}" "${github_hit}" "${velnor_hit}"
+              [[ "${CACHE_TEMPERATURE}" == cold ]] && TOOLS_publish=true
             else
-              [[ "${github_hit}" == "${velnor_hit}" ]]
-              if [[ "${github_hit}" == true ]]; then benchmark_hits=$((benchmark_hits + 1)); else benchmark_misses=$((benchmark_misses + 1)); fi
+              role=non-target; [[ "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'tools' ]] && role=target
+              state="$(benchmark_cache_state "${BENCHMARK_MODE}" "${role}" "${github_hit}" "${velnor_hit}")"
+              [[ "${state}" == miss ]] && TOOLS_publish=true
             fi
           fi
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'dependencies' ]]; then
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_MODE}" ]]; then
             selected=$((selected + 1))
             for identity in "${DEPENDENCIES_github_ARTIFACT_ID}" "${DEPENDENCIES_velnor_ARTIFACT_ID}"; do [[ "${identity}" =~ ^[1-9][0-9]*$ ]]; done
             for digest in "${DEPENDENCIES_github_ARTIFACT_DIGEST}" "${DEPENDENCIES_velnor_ARTIFACT_DIGEST}"; do [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; done
@@ -1867,12 +1881,14 @@ jobs:
             velnor_hit="$(cat "${velnor}/hit")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               verify_cache_temperature "${CACHE_TEMPERATURE}" "${github_hit}" "${velnor_hit}"
+              [[ "${CACHE_TEMPERATURE}" == cold ]] && DEPENDENCIES_publish=true
             else
-              [[ "${github_hit}" == "${velnor_hit}" ]]
-              if [[ "${github_hit}" == true ]]; then benchmark_hits=$((benchmark_hits + 1)); else benchmark_misses=$((benchmark_misses + 1)); fi
+              role=non-target; [[ "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'dependencies' ]] && role=target
+              state="$(benchmark_cache_state "${BENCHMARK_MODE}" "${role}" "${github_hit}" "${velnor_hit}")"
+              [[ "${state}" == miss ]] && DEPENDENCIES_publish=true
             fi
           fi
-          if [[ -n "${CACHE_PROOF_ID}" || "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'build-output' ]]; then
+          if [[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_MODE}" ]]; then
             selected=$((selected + 1))
             for identity in "${BUILD_OUTPUT_github_ARTIFACT_ID}" "${BUILD_OUTPUT_velnor_ARTIFACT_ID}"; do [[ "${identity}" =~ ^[1-9][0-9]*$ ]]; done
             for digest in "${BUILD_OUTPUT_github_ARTIFACT_DIGEST}" "${BUILD_OUTPUT_velnor_ARTIFACT_DIGEST}"; do [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; done
@@ -1887,18 +1903,23 @@ jobs:
             velnor_hit="$(cat "${velnor}/hit")"
             if [[ -n "${CACHE_PROOF_ID}" ]]; then
               verify_cache_temperature "${CACHE_TEMPERATURE}" "${github_hit}" "${velnor_hit}"
+              [[ "${CACHE_TEMPERATURE}" == cold ]] && BUILD_OUTPUT_publish=true
             else
-              [[ "${github_hit}" == "${velnor_hit}" ]]
-              if [[ "${github_hit}" == true ]]; then benchmark_hits=$((benchmark_hits + 1)); else benchmark_misses=$((benchmark_misses + 1)); fi
+              role=non-target; [[ "${BENCHMARK_MODE}" == normal || "${BENCHMARK_CACHE_ID}" == 'build-output' ]] && role=target
+              state="$(benchmark_cache_state "${BENCHMARK_MODE}" "${role}" "${github_hit}" "${velnor_hit}")"
+              [[ "${state}" == miss ]] && BUILD_OUTPUT_publish=true
             fi
           fi
           [[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }
-          if [[ -n "${CACHE_PROOF_ID}" ]]; then
-            [[ "${CACHE_TEMPERATURE}" == cold ]] && publish_needed=true
-          else
-            publish_needed="$(benchmark_publish_needed "${BENCHMARK_MODE}" "${benchmark_hits}" "${benchmark_misses}")"
-          fi
-          printf 'publish_needed=%s\n' "${publish_needed}" >> "${GITHUB_OUTPUT}"
+          [[ "${TOOLS_publish}" == true ]] && publish_needed=true
+          [[ "${DEPENDENCIES_publish}" == true ]] && publish_needed=true
+          [[ "${BUILD_OUTPUT_publish}" == true ]] && publish_needed=true
+          {
+            printf 'publish_needed=%s\n' "${publish_needed}"
+            printf 'publish_tools=%s\n' "${TOOLS_publish}"
+            printf 'publish_dependencies=%s\n' "${DEPENDENCIES_publish}"
+            printf 'publish_build_output=%s\n' "${BUILD_OUTPUT_publish}"
+          } >> "${GITHUB_OUTPUT}"
 
   reservation_barrier:
     name: Velnor reservation barrier
@@ -3341,7 +3362,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
-      group: velnor-cache-writer-github-${{ github.repository }}
+      group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}
       cancel-in-progress: false
     steps:
       - name: Check out repository
@@ -3352,7 +3373,7 @@ jobs:
           name: proof-post-github-${{ github.run_id }}-0
           path: .velnor-proof/publish/proof-post-github-${{ github.run_id }}-0
       - name: Clean tools in-lock preflight destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3360,7 +3381,7 @@ jobs:
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
       - name: Probe tools immediately before publication
         id: preflight-publish-tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3368,7 +3389,7 @@ jobs:
             .local/share/mise/installs
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Reject existing tools publication identity
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.preflight-publish-tools.outputs.cache-hit }}
@@ -3376,14 +3397,14 @@ jobs:
           set -euo pipefail
           [[ "${CACHE_HIT}" != true ]]
       - name: Clean tools after in-lock preflight
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
       - name: Materialize deterministic tools post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3454,13 +3475,13 @@ jobs:
           tar -xf "${root}/cache.tar" -C .
       - name: Start measured tools publisher boundary
         id: publisher-clock-tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         run: |
           printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish tools exactly once
         id: publish-tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3468,7 +3489,7 @@ jobs:
             .local/share/mise/installs
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Record measured tools publisher metrics
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         env:
           PUBLISH_CACHE_ID: tools
@@ -3495,7 +3516,7 @@ jobs:
             ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
           ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
       - name: Clean tools publication verification destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3503,7 +3524,7 @@ jobs:
           for root in '.cache/mise' '.local/share/mise/installs'; do rm -rf -- "${root}"; done
       - name: Restore published tools identity
         id: verify-publish-tools
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3511,7 +3532,7 @@ jobs:
             .local/share/mise/installs
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/tools/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/1e142e6277b12b7e1110478a24caee8f006a9349e86970c890203d6266209463
       - name: Verify published tools bytes
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'tools' }}
+        if: ${{ needs.restore_barrier.outputs.publish_tools == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.verify-publish-tools.outputs.cache-hit }}
@@ -3580,7 +3601,7 @@ jobs:
           [[ "$(cat "${source_root}/archive.sha256")" == "$(cat "${verified_root}/archive.sha256")" ]]
           [[ "$(cat "${source_root}/manifest.sha256")" == "$(cat "${verified_root}/manifest.sha256")" ]]
       - name: Clean dependencies in-lock preflight destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3588,7 +3609,7 @@ jobs:
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
       - name: Probe dependencies immediately before publication
         id: preflight-publish-dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3598,7 +3619,7 @@ jobs:
             **/node_modules
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Reject existing dependencies publication identity
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.preflight-publish-dependencies.outputs.cache-hit }}
@@ -3606,14 +3627,14 @@ jobs:
           set -euo pipefail
           [[ "${CACHE_HIT}" != true ]]
       - name: Clean dependencies after in-lock preflight
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
       - name: Materialize deterministic dependencies post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3684,13 +3705,13 @@ jobs:
           tar -xf "${root}/cache.tar" -C .
       - name: Start measured dependencies publisher boundary
         id: publisher-clock-dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         run: |
           printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish dependencies exactly once
         id: publish-dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3700,7 +3721,7 @@ jobs:
             **/node_modules
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Record measured dependencies publisher metrics
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         env:
           PUBLISH_CACHE_ID: dependencies
@@ -3727,7 +3748,7 @@ jobs:
             ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
           ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
       - name: Clean dependencies publication verification destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3735,7 +3756,7 @@ jobs:
           for root in '.cargo/git' '.cargo/registry' '.gradle/caches' '**/node_modules'; do rm -rf -- "${root}"; done
       - name: Restore published dependencies identity
         id: verify-publish-dependencies
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3745,7 +3766,7 @@ jobs:
             **/node_modules
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/dependencies/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/.npmrc', '**/.yarnrc.yml', '**/Cargo.lock', '**/Cargo.toml', '**/build.gradle', '**/build.gradle.kts', '**/bun.lock', '**/bun.lockb', '**/bunfig.toml', '**/gradle.lockfile', '**/gradle.properties', '**/gradle/libs.versions.toml', '**/gradle-wrapper.properties', '**/package-lock.json', '**/package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/settings.gradle', '**/settings.gradle.kts', '**/yarn.lock', 'mise.lock', 'mise.toml') }}/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66
       - name: Verify published dependencies bytes
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'dependencies' }}
+        if: ${{ needs.restore_barrier.outputs.publish_dependencies == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.verify-publish-dependencies.outputs.cache-hit }}
@@ -3814,7 +3835,7 @@ jobs:
           [[ "$(cat "${source_root}/archive.sha256")" == "$(cat "${verified_root}/archive.sha256")" ]]
           [[ "$(cat "${source_root}/manifest.sha256")" == "$(cat "${verified_root}/manifest.sha256")" ]]
       - name: Clean build-output in-lock preflight destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3822,7 +3843,7 @@ jobs:
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
       - name: Probe build-output immediately before publication
         id: preflight-publish-build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3830,7 +3851,7 @@ jobs:
             **/target
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Reject existing build-output publication identity
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.preflight-publish-build-output.outputs.cache-hit }}
@@ -3838,14 +3859,14 @@ jobs:
           set -euo pipefail
           [[ "${CACHE_HIT}" != true ]]
       - name: Clean build-output after in-lock preflight
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
       - name: Materialize deterministic build-output post-state
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3916,13 +3937,13 @@ jobs:
           tar -xf "${root}/cache.tar" -C .
       - name: Start measured build-output publisher boundary
         id: publisher-clock-build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         run: |
           printf 'started_ms=%s\n' "$(date +%s%3N)" >> "${GITHUB_OUTPUT}"
       - name: Publish build-output exactly once
         id: publish-build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3930,7 +3951,7 @@ jobs:
             **/target
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Record measured build-output publisher metrics
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         env:
           PUBLISH_CACHE_ID: build-output
@@ -3957,7 +3978,7 @@ jobs:
             ([.cache_save_ms,.cache_lock_wait_ms] | all(.[]; type == "number" and . >= 0 and floor == .))
           ' ".velnor-proof/publisher-metrics/${PUBLISH_CACHE_ID}.json" >/dev/null
       - name: Clean build-output publication verification destination
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3965,7 +3986,7 @@ jobs:
           for root in 'target' '**/target'; do rm -rf -- "${root}"; done
       - name: Restore published build-output identity
         id: verify-publish-build-output
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -3973,7 +3994,7 @@ jobs:
             **/target
           key: ${{ needs.validate-request.outputs.cache_namespace }}/code/build-output/${{ runner.os }}-${{ runner.arch }}/${{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/${{ hashFiles('**/.cargo/config.toml', '**/Cargo.lock', '**/Cargo.toml', 'mise.lock', 'mise.toml', 'rust-toolchain.toml') }}/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
       - name: Verify published build-output bytes
-        if: ${{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == 'build-output' }}
+        if: ${{ needs.restore_barrier.outputs.publish_build_output == 'true' }}
         shell: bash
         env:
           CACHE_HIT: ${{ steps.verify-publish-build-output.outputs.cache-hit }}

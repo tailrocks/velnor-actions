@@ -383,7 +383,7 @@ pub fn callable_workflow(
     );
     b.line(4, "timeout-minutes: 30");
     b.line(4, "concurrency:");
-    b.line(6, "group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}");
+    b.line(6, "group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}");
     b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
@@ -421,7 +421,7 @@ pub fn callable_workflow(
     b.line(4, "concurrency:");
     b.line(
         6,
-        "group: velnor-cache-writer-github-${{ github.repository }}",
+        "group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}",
     );
     b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
@@ -793,6 +793,13 @@ fn render_cache_proof_jobs(
         6,
         "publish_needed: ${{ steps.barrier.outputs.publish_needed }}",
     );
+    for cache in &declarations {
+        let output = cache.id.replace('-', "_");
+        b.line(
+            6,
+            &format!("publish_{output}: ${{{{ steps.barrier.outputs.publish_{output} }}}}"),
+        );
+    }
     b.line(4, "steps:");
     for cache in &declarations {
         let id = cache.id.as_str();
@@ -1067,7 +1074,7 @@ fn render_cache_proof_jobs(
     b.line(4, "concurrency:");
     b.line(
         6,
-        "group: velnor-cache-writer-github-${{ github.repository }}",
+        "group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}",
     );
     b.line(6, "cancel-in-progress: false");
     b.line(4, "steps:");
@@ -1094,9 +1101,9 @@ fn render_cache_proof_jobs(
     );
     for cache in &declarations {
         let id = cache.id.as_str();
-        let selected = format!(
-            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == '{id}' }}}}"
-        );
+        let output = id.replace('-', "_");
+        let selected =
+            format!("${{{{ needs.restore_barrier.outputs.publish_{output} == 'true' }}}}");
         b.line(
             6,
             &format!("- name: Clean {id} in-lock preflight destination"),
@@ -1387,16 +1394,38 @@ fn cache_action_with(
 
 pub fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
     let mut script = format!(
-        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n{CACHE_TEMPERATURE_FUNCTION}\nselected=0\nbenchmark_hits=0\nbenchmark_misses=0\npublish_needed=false\n"
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n{CACHE_TEMPERATURE_FUNCTION}\nselected=0\npublish_needed=false\n"
     );
+    for cache in declarations {
+        let env = cache.id.replace('-', "_").to_ascii_uppercase();
+        script.push_str(&format!("{env}_publish=false\n"));
+    }
     for cache in declarations {
         let id = cache.id.as_str();
         let env = id.replace('-', "_").to_ascii_uppercase();
         script.push_str(&format!(
-            "if [[ -n \"${{CACHE_PROOF_ID}}\" || \"${{BENCHMARK_MODE}}\" == normal || \"${{BENCHMARK_CACHE_ID}}\" == '{id}' ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  github_hit=\"$(cat \"${{github}}/hit\")\"\n  velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    verify_cache_temperature \"${{CACHE_TEMPERATURE}}\" \"${{github_hit}}\" \"${{velnor_hit}}\"\n  else\n    [[ \"${{github_hit}}\" == \"${{velnor_hit}}\" ]]\n    if [[ \"${{github_hit}}\" == true ]]; then benchmark_hits=$((benchmark_hits + 1)); else benchmark_misses=$((benchmark_misses + 1)); fi\n  fi\nfi\n"
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_MODE}}\" ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  github_hit=\"$(cat \"${{github}}/hit\")\"\n  velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    verify_cache_temperature \"${{CACHE_TEMPERATURE}}\" \"${{github_hit}}\" \"${{velnor_hit}}\"\n    [[ \"${{CACHE_TEMPERATURE}}\" == cold ]] && {env}_publish=true\n  else\n    role=non-target; [[ \"${{BENCHMARK_MODE}}\" == normal || \"${{BENCHMARK_CACHE_ID}}\" == '{id}' ]] && role=target\n    state=\"$(benchmark_cache_state \"${{BENCHMARK_MODE}}\" \"${{role}}\" \"${{github_hit}}\" \"${{velnor_hit}}\")\"\n    [[ \"${{state}}\" == miss ]] && {env}_publish=true\n  fi\nfi\n"
         ));
     }
-    script.push_str("[[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }\nif [[ -n \"${CACHE_PROOF_ID}\" ]]; then\n  [[ \"${CACHE_TEMPERATURE}\" == cold ]] && publish_needed=true\nelse\n  publish_needed=\"$(benchmark_publish_needed \"${BENCHMARK_MODE}\" \"${benchmark_hits}\" \"${benchmark_misses}\")\"\nfi\nprintf 'publish_needed=%s\\n' \"${publish_needed}\" >> \"${GITHUB_OUTPUT}\"\n");
+    script.push_str(
+        "[[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }\n",
+    );
+    for cache in declarations {
+        let output = cache.id.replace('-', "_");
+        let env = output.to_ascii_uppercase();
+        script.push_str(&format!(
+            "[[ \"${{{env}_publish}}\" == true ]] && publish_needed=true\n"
+        ));
+    }
+    script.push_str("{\n  printf 'publish_needed=%s\\n' \"${publish_needed}\"\n");
+    for cache in declarations {
+        let output = cache.id.replace('-', "_");
+        let env = output.to_ascii_uppercase();
+        script.push_str(&format!(
+            "  printf 'publish_{output}=%s\\n' \"${{{env}_publish}}\"\n"
+        ));
+    }
+    script.push_str("} >> \"${GITHUB_OUTPUT}\"\n");
     script
 }
 
@@ -1408,11 +1437,17 @@ pub const CACHE_TEMPERATURE_FUNCTION: &str = r#"verify_cache_temperature() {
     *) return 1 ;;
   esac
 }
-benchmark_publish_needed() {
-  local mode="$1" hits="$2" misses="$3"
-  [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${hits}" =~ ^[0-9]+$ && "${misses}" =~ ^[0-9]+$ ]]
-  (( hits == 0 || misses == 0 )) || return 1
-  if [[ "${mode}" != disabled && "${misses}" -gt 0 ]]; then printf 'true\n'; else printf 'false\n'; fi
+benchmark_cache_state() {
+  local mode="$1" role="$2" github_hit="$3" velnor_hit="$4"
+  [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${role}" =~ ^(target|non-target)$ ]]
+  [[ "${github_hit}" == "${velnor_hit}" ]]
+  if [[ "${mode}" == normal || ( "${mode}" == enabled && "${role}" == target ) ]]; then
+    if [[ "${github_hit}" == true ]]; then printf 'hit\n'; else printf 'miss\n'; fi
+  elif [[ "${mode}" == disabled && "${role}" == target ]]; then
+    [[ "${github_hit}" != true ]]; printf 'ignored\n'
+  else
+    [[ "${github_hit}" == true ]]; printf 'ignored\n'
+  fi
 }"#;
 
 /// Fail-closed verifier shared by every cache-evidence boundary.
@@ -2157,9 +2192,11 @@ elif [[ -n "${CACHE_PROOF_ID}" ]]; then
 else
   [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"
 fi
-printf 'correlation=%s\n' "${correlation}" >> "${GITHUB_OUTPUT}"
-printf 'workflow_blob=%s\n' "${workflow_blob}" >> "${GITHUB_OUTPUT}"
-printf 'cache_namespace=%s\n' "${cache_namespace}" >> "${GITHUB_OUTPUT}"
+{
+  printf 'correlation=%s\n' "${correlation}"
+  printf 'workflow_blob=%s\n' "${workflow_blob}"
+  printf 'cache_namespace=%s\n' "${cache_namespace}"
+} >> "${GITHUB_OUTPUT}"
 "#;
 
 const VELNOR_AUTHORITY_CAPTURE_SCRIPT: &str = r#"set -euo pipefail

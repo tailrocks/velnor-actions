@@ -363,17 +363,23 @@ fn cold_hit_and_warm_miss_are_rejected_on_either_lane() {
     assert!(!run_temperature_contract("unknown", "true", "true"));
 }
 
-fn benchmark_publish_decision(mode: &str, hits: &str, misses: &str) -> Option<String> {
+fn benchmark_cache_state(
+    mode: &str,
+    role: &str,
+    github_hit: &str,
+    velnor_hit: &str,
+) -> Option<String> {
     let script = format!(
-        "set -euo pipefail\n{}\nbenchmark_publish_needed \"${{MODE}}\" \"${{HITS}}\" \"${{MISSES}}\"",
+        "set -euo pipefail\n{}\nbenchmark_cache_state \"${{MODE}}\" \"${{ROLE}}\" \"${{GITHUB_HIT}}\" \"${{VELNOR_HIT}}\"",
         velnor_actions_generator::render::CACHE_TEMPERATURE_FUNCTION
     );
     let output = std::process::Command::new("bash")
         .arg("-c")
         .arg(script)
         .env("MODE", mode)
-        .env("HITS", hits)
-        .env("MISSES", misses)
+        .env("ROLE", role)
+        .env("GITHUB_HIT", github_hit)
+        .env("VELNOR_HIT", velnor_hit)
         .output()
         .unwrap();
     output
@@ -384,27 +390,37 @@ fn benchmark_publish_decision(mode: &str, hits: &str, misses: &str) -> Option<St
 
 #[test]
 fn benchmark_fresh_seed_publishes_and_identical_warm_reuse_does_not() {
+    for mask in 0_u8..8 {
+        let mut misses = 0;
+        for cache in 0..3 {
+            let hit = if mask & (1 << cache) == 0 {
+                "false"
+            } else {
+                "true"
+            };
+            let state = benchmark_cache_state("normal", "target", hit, hit).unwrap();
+            misses += usize::from(state == "miss\n");
+        }
+        assert_eq!(misses > 0, mask != 7, "mask {mask:03b}");
+    }
     assert_eq!(
-        benchmark_publish_decision("normal", "0", "3").as_deref(),
-        Some("true\n")
+        benchmark_cache_state("enabled", "target", "false", "false").as_deref(),
+        Some("miss\n")
     );
     assert_eq!(
-        benchmark_publish_decision("normal", "3", "0").as_deref(),
-        Some("false\n")
+        benchmark_cache_state("enabled", "target", "true", "true").as_deref(),
+        Some("hit\n")
     );
     assert_eq!(
-        benchmark_publish_decision("enabled", "0", "1").as_deref(),
-        Some("true\n")
+        benchmark_cache_state("disabled", "target", "false", "false").as_deref(),
+        Some("ignored\n")
     );
+    assert!(benchmark_cache_state("enabled", "non-target", "false", "false").is_none());
+    assert!(benchmark_cache_state("enabled", "non-target", "true", "false").is_none());
     assert_eq!(
-        benchmark_publish_decision("enabled", "1", "0").as_deref(),
-        Some("false\n")
+        benchmark_cache_state("enabled", "non-target", "true", "true").as_deref(),
+        Some("ignored\n")
     );
-    assert_eq!(
-        benchmark_publish_decision("disabled", "0", "1").as_deref(),
-        Some("false\n")
-    );
-    assert!(benchmark_publish_decision("normal", "1", "2").is_none());
 }
 
 #[test]
@@ -710,7 +726,9 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
     assert!(condition.contains("needs.restore_barrier.outputs.publish_needed == 'true'"));
     assert_eq!(
         publisher["concurrency"]["group"].as_str(),
-        Some("velnor-cache-writer-github-${{ github.repository }}")
+        Some(
+            "velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}"
+        )
     );
     assert_eq!(
         publisher["concurrency"]["cancel-in-progress"].as_bool(),
