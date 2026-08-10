@@ -31,7 +31,7 @@ on:
         type: string
         default: ""
       benchmark_generation:
-        description: "Benchmark schema generation."
+        description: "Unique trusted benchmark cache generation."
         required: false
         type: string
         default: ""

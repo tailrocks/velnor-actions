@@ -3,6 +3,7 @@
 
 mod common;
 
+use sha2::Digest;
 use velnor_actions_generator::RepositoryClass;
 use velnor_actions_generator::cache::CacheContract;
 use velnor_actions_generator::model::{Applicability, FleetManifest, Lane, resolve_lanes};
@@ -186,6 +187,10 @@ fn tap_platform_gate_is_required_on_macos_independent_of_lane() {
 }
 
 fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
+    request_validator_result(overrides).0
+}
+
+fn request_validator_result(overrides: &[(&str, &str)]) -> (bool, String) {
     use sha2::{Digest, Sha256};
     let output = common::temp_dir("request-validator").join("github-output");
     let mut command = std::process::Command::new("bash");
@@ -228,8 +233,10 @@ fn run_request_validator(overrides: &[(&str, &str)]) -> bool {
     for (key, value) in overrides {
         command.env(key, value);
     }
-    command.env("GITHUB_OUTPUT", output);
-    command.status().unwrap().success()
+    command.env("GITHUB_OUTPUT", &output);
+    let success = command.status().unwrap().success();
+    let emitted = std::fs::read_to_string(output).unwrap_or_default();
+    (success, emitted)
 }
 
 #[test]
@@ -238,7 +245,7 @@ fn optional_operations_fail_closed_before_project_commands() {
     assert!(!run_request_validator(&[("BENCHMARK_FANOUT", "8")]));
     assert!(!run_request_validator(&[
         ("BENCHMARK_CAMPAIGN", "campaign-0001"),
-        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
         ("BENCHMARK_CACHE_ID", "unknown"),
         ("BENCHMARK_CACHE_MODE", "enabled"),
         ("BENCHMARK_FANOUT", "8"),
@@ -254,7 +261,7 @@ fn optional_operations_fail_closed_before_project_commands() {
         ("REF_PROTECTED", "true"),
         ("REF_NAME", "2026.7.0"),
         ("BENCHMARK_CAMPAIGN", "campaign-0001"),
-        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
         ("BENCHMARK_CACHE_ID", "tools"),
         ("BENCHMARK_CACHE_MODE", "enabled"),
         ("BENCHMARK_FANOUT", "8"),
@@ -358,7 +365,7 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
         ("REF_PROTECTED", "true"),
         ("REF_NAME", "2026.7.0"),
         ("BENCHMARK_CAMPAIGN", "campaign-0001"),
-        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
         ("BENCHMARK_CACHE_ID", "tools"),
         ("BENCHMARK_CACHE_MODE", "enabled"),
         ("BENCHMARK_FANOUT", "1"),
@@ -366,6 +373,48 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
         ("BENCHMARK_RESERVATION", "reservation-0001"),
     ];
     assert!(run_request_validator(&common));
+    let (success, emitted) = request_validator_result(&common);
+    assert!(success);
+    let expected_generation = hex::encode(sha2::Sha256::digest(b"campaign/code/github/core/01"));
+    assert!(emitted.contains(&format!(
+        "cache_namespace=benchmark-v1/{expected_generation}\n"
+    )));
+    assert_eq!(request_validator_result(&common), (true, emitted.clone()));
+    let mut next_generation = common.to_vec();
+    next_generation.push(("BENCHMARK_GENERATION", "campaign/code/github/core/02"));
+    let (success, next_emitted) = request_validator_result(&next_generation);
+    assert!(success);
+    assert_ne!(emitted, next_emitted);
+    let normal_core = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
+        ("BENCHMARK_CAMPAIGN", "campaign-0001"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
+        ("BENCHMARK_CACHE_MODE", "normal"),
+        ("BENCHMARK_FANOUT", "1"),
+        ("BENCHMARK_WAVE", "wave-0001"),
+        ("BENCHMARK_RESERVATION", "reservation-0001"),
+    ];
+    assert!(run_request_validator(&normal_core));
+    let (ordinary_success, ordinary) = request_validator_result(&[]);
+    assert!(ordinary_success);
+    assert!(ordinary.contains("cache_namespace=ci-v1\n"));
+    let cache_generation_two = [
+        ("PATH", path.as_str()),
+        ("EVENT_NAME", "workflow_dispatch"),
+        ("REF_TYPE", "tag"),
+        ("REF_PROTECTED", "true"),
+        ("REF_NAME", "2026.7.0"),
+        ("CACHE_PROOF_ID", "cache-proof-0001"),
+        ("CACHE_GENERATION", "2"),
+        ("CACHE_TEMPERATURE", "cold"),
+    ];
+    let (cache_success, cache_output) = request_validator_result(&cache_generation_two);
+    assert!(cache_success);
+    assert!(cache_output.contains("cache_namespace=ci-v2\n"));
     let mut wrong = common.to_vec();
     wrong.push(("FAKE_TAG_SHA", "cccccccccccccccccccccccccccccccccccccccc"));
     assert!(!run_request_validator(&wrong));
@@ -417,7 +466,7 @@ fn operation_input_domains_reject_every_foreign_field() {
     assert!(run_request_validator(&cache_proof));
     for foreign in [
         ("BENCHMARK_CAMPAIGN", "campaign-0001"),
-        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
         ("BENCHMARK_CACHE_ID", "tools"),
         ("BENCHMARK_CACHE_MODE", "enabled"),
         ("BENCHMARK_FANOUT", "1"),
@@ -437,7 +486,7 @@ fn operation_input_domains_reject_every_foreign_field() {
     ];
     assert!(run_request_validator(&recovery));
     for foreign in [
-        ("BENCHMARK_GENERATION", "1"),
+        ("BENCHMARK_GENERATION", "campaign/code/github/core/01"),
         ("BENCHMARK_CACHE_ID", "tools"),
         ("BENCHMARK_CACHE_MODE", "enabled"),
         ("BENCHMARK_FANOUT", "1"),

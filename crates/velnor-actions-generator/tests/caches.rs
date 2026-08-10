@@ -363,6 +363,50 @@ fn cold_hit_and_warm_miss_are_rejected_on_either_lane() {
     assert!(!run_temperature_contract("unknown", "true", "true"));
 }
 
+fn benchmark_publish_decision(mode: &str, hits: &str, misses: &str) -> Option<String> {
+    let script = format!(
+        "set -euo pipefail\n{}\nbenchmark_publish_needed \"${{MODE}}\" \"${{HITS}}\" \"${{MISSES}}\"",
+        velnor_actions_generator::render::CACHE_TEMPERATURE_FUNCTION
+    );
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .env("MODE", mode)
+        .env("HITS", hits)
+        .env("MISSES", misses)
+        .output()
+        .unwrap();
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).unwrap())
+}
+
+#[test]
+fn benchmark_fresh_seed_publishes_and_identical_warm_reuse_does_not() {
+    assert_eq!(
+        benchmark_publish_decision("normal", "0", "3").as_deref(),
+        Some("true\n")
+    );
+    assert_eq!(
+        benchmark_publish_decision("normal", "3", "0").as_deref(),
+        Some("false\n")
+    );
+    assert_eq!(
+        benchmark_publish_decision("enabled", "0", "1").as_deref(),
+        Some("true\n")
+    );
+    assert_eq!(
+        benchmark_publish_decision("enabled", "1", "0").as_deref(),
+        Some("false\n")
+    );
+    assert_eq!(
+        benchmark_publish_decision("disabled", "0", "1").as_deref(),
+        Some("false\n")
+    );
+    assert!(benchmark_publish_decision("normal", "1", "2").is_none());
+}
+
 #[test]
 fn generated_lanes_embed_identical_bounded_cache_contract() {
     let contract = load();
@@ -593,6 +637,7 @@ fn run_proof_contract(overrides: &[(&str, &str)]) -> bool {
     command.env("BENCHMARK_MODE", "");
     command.env("CACHE_PROOF_ID", "proof");
     command.env("BENCHMARK_CAMPAIGN", "");
+    command.env("PUBLISH_NEEDED", "false");
     for (key, value) in overrides {
         command.env(key, value);
     }
@@ -608,6 +653,7 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
     assert!(!run_proof_contract(&[("CACHE_PUBLISH", "success")]));
     assert!(run_proof_contract(&[
         ("TEMPERATURE", "cold"),
+        ("PUBLISH_NEEDED", "true"),
         ("CACHE_PUBLISH", "success"),
     ]));
     assert!(!run_proof_contract(&[("TEMPERATURE", "cold")]));
@@ -617,7 +663,7 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("BENCHMARK_MODE", "disabled"),
         ("CACHE_PUBLISH", "success"),
     ]));
-    assert!(!run_proof_contract(&[
+    assert!(run_proof_contract(&[
         ("CACHE_PROOF_ID", ""),
         ("BENCHMARK_CAMPAIGN", "campaign"),
         ("BENCHMARK_MODE", "enabled"),
@@ -626,6 +672,7 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("CACHE_PROOF_ID", ""),
         ("BENCHMARK_CAMPAIGN", "campaign"),
         ("BENCHMARK_MODE", "enabled"),
+        ("PUBLISH_NEEDED", "true"),
         ("CACHE_PUBLISH", "success"),
     ]));
     assert!(!run_proof_contract(&[("GITHUB_EXECUTE", "skipped")]));
@@ -660,18 +707,24 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
     let jobs = &documents[0]["jobs"];
     let publisher = &jobs["cache_publish"];
     let condition = publisher["if"].as_str().unwrap();
-    assert!(condition.contains("inputs.cache_temperature == 'cold'"));
-    assert!(condition.contains("inputs.benchmark_cache_mode == 'enabled'"));
-    assert!(
-        condition.contains("inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold'")
-    );
+    assert!(condition.contains("needs.restore_barrier.outputs.publish_needed == 'true'"));
     assert_eq!(
         publisher["concurrency"]["group"].as_str(),
-        Some("velnor-cache-publisher-${{ github.repository }}")
+        Some("velnor-cache-writer-github-${{ github.repository }}")
     );
     assert_eq!(
         publisher["concurrency"]["cancel-in-progress"].as_bool(),
         Some(false)
+    );
+    assert_eq!(
+        jobs["github-lane"]["concurrency"]["group"].as_str(),
+        publisher["concurrency"]["group"].as_str()
+    );
+    assert!(
+        jobs["velnor-lane"]["concurrency"]["group"]
+            .as_str()
+            .unwrap()
+            .contains("&& 'github' || 'velnor'")
     );
     for lane in ["github_restore", "velnor_restore"] {
         let restore = jobs[lane]["steps"]
@@ -709,7 +762,7 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
             && step["run"].as_str().unwrap().contains("CACHE_HIT")
             && step["run"].as_str().unwrap().contains("!= true")
     }));
-    assert!(!condition.contains("inputs.cache_temperature == 'warm'"));
+    assert!(!condition.contains("inputs.cache_temperature"));
     let save_steps = publisher["steps"]
         .as_vec()
         .unwrap()

@@ -318,6 +318,10 @@ pub fn callable_workflow(
         6,
         "workflow_blob: ${{ steps.validate.outputs.workflow_blob }}",
     );
+    b.line(
+        6,
+        "cache_namespace: ${{ steps.validate.outputs.cache_namespace }}",
+    );
     b.line(4, "steps:");
     b.line(6, "- name: Authenticate optional operation");
     b.line(8, "id: validate");
@@ -378,6 +382,9 @@ pub fn callable_workflow(
         "runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'ubuntu-latest' || 'velnor-trusted' }}",
     );
     b.line(4, "timeout-minutes: 30");
+    b.line(4, "concurrency:");
+    b.line(6, "group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}");
+    b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
     b.line(4, "steps:");
@@ -411,6 +418,12 @@ pub fn callable_workflow(
     );
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 30");
+    b.line(4, "concurrency:");
+    b.line(
+        6,
+        "group: velnor-cache-writer-github-${{ github.repository }}",
+    );
+    b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
     b.line(4, "steps:");
@@ -539,7 +552,10 @@ fn consumer_auxiliary_inputs(b: &mut Builder) {
             "benchmark_campaign",
             "Authenticated benchmark campaign correlation.",
         ),
-        ("benchmark_generation", "Benchmark schema generation."),
+        (
+            "benchmark_generation",
+            "Unique trusted benchmark cache generation.",
+        ),
         ("benchmark_cache_id", "One declared cache identity."),
         ("benchmark_cache_mode", "normal, enabled, or disabled."),
         ("benchmark_fanout", "One or eight coordinated jobs."),
@@ -772,6 +788,11 @@ fn render_cache_proof_jobs(
     );
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 10");
+    b.line(4, "outputs:");
+    b.line(
+        6,
+        "publish_needed: ${{ steps.barrier.outputs.publish_needed }}",
+    );
     b.line(4, "steps:");
     for cache in &declarations {
         let id = cache.id.as_str();
@@ -792,11 +813,13 @@ fn render_cache_proof_jobs(
         }
     }
     b.line(6, "- name: Verify paired restore evidence and temperature");
+    b.line(8, "id: barrier");
     b.line(8, "shell: bash");
     b.line(8, "env:");
     b.line(10, "CACHE_TEMPERATURE: ${{ inputs.cache_temperature }}");
     b.line(10, "CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}");
     b.line(10, "BENCHMARK_CACHE_ID: ${{ inputs.benchmark_cache_id }}");
+    b.line(10, "BENCHMARK_MODE: ${{ inputs.benchmark_cache_mode }}");
     for cache in &declarations {
         let output = cache.id.replace('-', "_");
         let env = output.to_ascii_uppercase();
@@ -1038,11 +1061,14 @@ fn render_cache_proof_jobs(
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
     b.line(6, "- proof_reconcile");
-    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
+    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.restore_barrier.outputs.publish_needed == 'true' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 20");
     b.line(4, "concurrency:");
-    b.line(6, "group: velnor-cache-publisher-${{ github.repository }}");
+    b.line(
+        6,
+        "group: velnor-cache-writer-github-${{ github.repository }}",
+    );
     b.line(6, "cancel-in-progress: false");
     b.line(4, "steps:");
     b.line(6, "- name: Check out repository");
@@ -1069,7 +1095,7 @@ fn render_cache_proof_jobs(
     for cache in &declarations {
         let id = cache.id.as_str();
         let selected = format!(
-            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
+            "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_mode == 'normal' || inputs.benchmark_cache_id == '{id}' }}}}"
         );
         b.line(
             6,
@@ -1233,6 +1259,10 @@ fn render_cache_proof_jobs(
     b.line(10, "BENCHMARK_MODE: ${{ inputs.benchmark_cache_mode }}");
     b.line(10, "CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}");
     b.line(10, "BENCHMARK_CAMPAIGN: ${{ inputs.benchmark_campaign }}");
+    b.line(
+        10,
+        "PUBLISH_NEEDED: ${{ needs.restore_barrier.outputs.publish_needed }}",
+    );
     b.run_block(8, PROOF_CONTRACT_SCRIPT);
     b.blank();
 }
@@ -1339,7 +1369,7 @@ fn cache_action_with(
     b.line(
         10,
         &format!(
-            "key: ci-v${{{{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{phase}",
+            "key: ${{{{ needs.validate-request.outputs.cache_namespace }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/{phase}",
             class.code(), cache.id
         ),
     );
@@ -1348,7 +1378,7 @@ fn cache_action_with(
         b.line(
             12,
             &format!(
-                "ci-v${{{{ inputs.cache_generation != '' && inputs.cache_generation || '1' }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
+                "${{{{ needs.validate-request.outputs.cache_namespace }}}}/{}/{}/${{{{ runner.os }}}}-${{{{ runner.arch }}}}/${{{{ hashFiles('mise.lock', 'mise.toml', 'rust-toolchain.toml') }}}}/${{{{ hashFiles({globs}) }}}}/",
                 class.code(), cache.id
             ),
         );
@@ -1357,18 +1387,16 @@ fn cache_action_with(
 
 pub fn barrier_script(declarations: &[&CacheDeclaration]) -> String {
     let mut script = format!(
-        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n{CACHE_TEMPERATURE_FUNCTION}\nselected=0\n"
+        "set -euo pipefail\n{EVIDENCE_VERIFIER}\n{CACHE_TEMPERATURE_FUNCTION}\nselected=0\nbenchmark_hits=0\nbenchmark_misses=0\npublish_needed=false\n"
     );
     for cache in declarations {
         let id = cache.id.as_str();
         let env = id.replace('-', "_").to_ascii_uppercase();
         script.push_str(&format!(
-            "if [[ -n \"${{CACHE_PROOF_ID}}\" || -n \"${{BENCHMARK_CACHE_ID}}\" ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    verify_cache_temperature \"${{CACHE_TEMPERATURE}}\" \"$(cat \"${{github}}/hit\")\" \"$(cat \"${{velnor}}/hit\")\"\n  fi\nfi\n"
+            "if [[ -n \"${{CACHE_PROOF_ID}}\" || \"${{BENCHMARK_MODE}}\" == normal || \"${{BENCHMARK_CACHE_ID}}\" == '{id}' ]]; then\n  selected=$((selected + 1))\n  for identity in \"${{{env}_github_ARTIFACT_ID}}\" \"${{{env}_velnor_ARTIFACT_ID}}\"; do [[ \"${{identity}}\" =~ ^[1-9][0-9]*$ ]]; done\n  for digest in \"${{{env}_github_ARTIFACT_DIGEST}}\" \"${{{env}_velnor_ARTIFACT_DIGEST}}\"; do [[ \"${{digest}}\" =~ ^sha256:[0-9a-f]{{64}}$ ]]; done\n  [[ \"${{{env}_github_ARTIFACT_ID}}\" != \"${{{env}_velnor_ARTIFACT_ID}}\" ]]\n  github='.velnor-proof/barrier/github/{id}'\n  velnor='.velnor-proof/barrier/velnor/{id}'\n  verify_evidence \"${{github}}\" github '{id}'\n  verify_evidence \"${{velnor}}\" velnor '{id}'\n  test \"$(cat \"${{github}}/archive.sha256\")\" = \"$(cat \"${{velnor}}/archive.sha256\")\"\n  test \"$(cat \"${{github}}/manifest.sha256\")\" = \"$(cat \"${{velnor}}/manifest.sha256\")\"\n  github_hit=\"$(cat \"${{github}}/hit\")\"\n  velnor_hit=\"$(cat \"${{velnor}}/hit\")\"\n  if [[ -n \"${{CACHE_PROOF_ID}}\" ]]; then\n    verify_cache_temperature \"${{CACHE_TEMPERATURE}}\" \"${{github_hit}}\" \"${{velnor_hit}}\"\n  else\n    [[ \"${{github_hit}}\" == \"${{velnor_hit}}\" ]]\n    if [[ \"${{github_hit}}\" == true ]]; then benchmark_hits=$((benchmark_hits + 1)); else benchmark_misses=$((benchmark_misses + 1)); fi\n  fi\nfi\n"
         ));
     }
-    script.push_str(
-        "[[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }\n",
-    );
+    script.push_str("[[ ${selected} -gt 0 ]] || { echo 'zero applicable cache proof work' >&2; exit 1; }\nif [[ -n \"${CACHE_PROOF_ID}\" ]]; then\n  [[ \"${CACHE_TEMPERATURE}\" == cold ]] && publish_needed=true\nelse\n  publish_needed=\"$(benchmark_publish_needed \"${BENCHMARK_MODE}\" \"${benchmark_hits}\" \"${benchmark_misses}\")\"\nfi\nprintf 'publish_needed=%s\\n' \"${publish_needed}\" >> \"${GITHUB_OUTPUT}\"\n");
     script
 }
 
@@ -1379,6 +1407,12 @@ pub const CACHE_TEMPERATURE_FUNCTION: &str = r#"verify_cache_temperature() {
     warm) [[ "${github_hit}" == true && "${velnor_hit}" == true ]] ;;
     *) return 1 ;;
   esac
+}
+benchmark_publish_needed() {
+  local mode="$1" hits="$2" misses="$3"
+  [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${hits}" =~ ^[0-9]+$ && "${misses}" =~ ^[0-9]+$ ]]
+  (( hits == 0 || misses == 0 )) || return 1
+  if [[ "${mode}" != disabled && "${misses}" -gt 0 ]]; then printf 'true\n'; else printf 'false\n'; fi
 }"#;
 
 /// Fail-closed verifier shared by every cache-evidence boundary.
@@ -1645,14 +1679,14 @@ pub const PROOF_CONTRACT_SCRIPT: &str = r#"set -euo pipefail
 for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GITHUB_EXECUTE}" "${VELNOR_EXECUTE}" "${PROOF_RECONCILE}"; do
   [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
 done
-publish_expected=false
+[[ -n "${CACHE_PROOF_ID}" || -n "${BENCHMARK_CAMPAIGN}" ]] || { echo "missing proof operation identity" >&2; exit 1; }
+[[ "${PUBLISH_NEEDED}" == true || "${PUBLISH_NEEDED}" == false ]] || { echo "invalid publisher decision" >&2; exit 1; }
 if [[ -n "${CACHE_PROOF_ID}" ]]; then
-  [[ "${TEMPERATURE}" == cold ]] && publish_expected=true
-elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
-  [[ "${BENCHMARK_MODE}" == enabled ]] && publish_expected=true
-else
-  echo "missing proof operation identity" >&2; exit 1
+  [[ ( "${TEMPERATURE}" == cold && "${PUBLISH_NEEDED}" == true ) || ( "${TEMPERATURE}" == warm && "${PUBLISH_NEEDED}" == false ) ]] || { echo "cache-proof temperature/publisher mismatch" >&2; exit 1; }
+elif [[ "${BENCHMARK_MODE}" == disabled && "${PUBLISH_NEEDED}" != false ]]; then
+  echo "disabled benchmark requested publication" >&2; exit 1
 fi
+publish_expected="${PUBLISH_NEEDED}"
 if ${publish_expected}; then
   [[ "${CACHE_PUBLISH}" == success ]] || { echo "cold/enabled proof publisher did not succeed" >&2; exit 1; }
 else
@@ -2042,6 +2076,9 @@ fn gate_step(b: &mut Builder, gate: &Gate, run_gate: &str) {
 pub const VALIDATE_REQUEST_SCRIPT: &str = r#"set -euo pipefail
 fail() { echo "request contract: $*" >&2; exit 1; }
 is_id() { [[ "$1" =~ ^[a-z0-9][a-z0-9._:-]{7,127}$ ]]; }
+is_benchmark_generation() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9._:/-]{6,238}[a-z0-9]$ && "$1" != *//* && "/$1/" != */../* ]]
+}
 is_declared_cache() { [[ ",${DECLARED_CACHE_IDS}," == *",$1,"* ]]; }
 protected_dispatch() {
   [[ "${EVENT_NAME}" == "workflow_dispatch" ]] || fail "operation requires workflow_dispatch"
@@ -2080,6 +2117,7 @@ protected_dispatch() {
 
 correlation="ordinary"
 workflow_blob="none"
+cache_namespace="ci-v1"
 if [[ -n "${RECOVERY_PROOF_ID}" ]]; then
   [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF_TYPE}" == "branch" ]] || fail "recovery requires branch dispatch"
   [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ && "${WORKFLOW_SHA}" == "${HEAD_SHA}" ]] || fail "recovery ref is not exact workflow head"
@@ -2095,14 +2133,19 @@ if [[ -n "${RECOVERY_PROOF_ID}" ]]; then
 elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
   protected_dispatch
   is_id "${BENCHMARK_CAMPAIGN}" || fail "invalid benchmark campaign"
-  [[ "${BENCHMARK_GENERATION}" == "1" ]] || fail "unknown benchmark generation"
-  is_declared_cache "${BENCHMARK_CACHE_ID}" || fail "unknown benchmark cache"
+  is_benchmark_generation "${BENCHMARK_GENERATION}" || fail "invalid benchmark generation"
   [[ "${BENCHMARK_CACHE_MODE}" =~ ^(normal|enabled|disabled)$ ]] || fail "unknown benchmark cache mode"
+  if [[ "${BENCHMARK_CACHE_MODE}" == normal ]]; then
+    [[ -z "${BENCHMARK_CACHE_ID}" ]] || fail "normal benchmark cannot select one cache"
+  else
+    is_declared_cache "${BENCHMARK_CACHE_ID}" || fail "unknown benchmark cache"
+  fi
   [[ "${BENCHMARK_FANOUT}" =~ ^(1|8)$ ]] || fail "unknown benchmark fanout"
   is_id "${BENCHMARK_WAVE}" || fail "invalid benchmark wave"
   is_id "${BENCHMARK_RESERVATION}" || fail "invalid benchmark reservation"
   [[ -z "${CACHE_PROOF_ID}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "benchmark cannot combine with cache-proof fields"
   correlation="${BENCHMARK_CAMPAIGN}:${BENCHMARK_WAVE}"
+  cache_namespace="benchmark-v1/$(printf '%s' "${BENCHMARK_GENERATION}" | sha256sum | cut -d' ' -f1)"
 elif [[ -n "${CACHE_PROOF_ID}" ]]; then
   protected_dispatch
   is_id "${CACHE_PROOF_ID}" || fail "invalid cache proof id"
@@ -2110,11 +2153,13 @@ elif [[ -n "${CACHE_PROOF_ID}" ]]; then
   [[ "${CACHE_TEMPERATURE}" =~ ^(cold|warm)$ ]] || fail "unknown cache temperature"
   [[ -z "${BENCHMARK_CAMPAIGN}${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}" ]] || fail "cache proof cannot combine with benchmark fields"
   correlation="${CACHE_PROOF_ID}:${CACHE_GENERATION}:${CACHE_TEMPERATURE}"
+  cache_namespace="ci-v${CACHE_GENERATION}"
 else
   [[ -z "${BENCHMARK_GENERATION}${BENCHMARK_CACHE_ID}${BENCHMARK_CACHE_MODE}${BENCHMARK_FANOUT}${BENCHMARK_WAVE}${BENCHMARK_RESERVATION}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "orphan operation input"
 fi
 printf 'correlation=%s\n' "${correlation}" >> "${GITHUB_OUTPUT}"
 printf 'workflow_blob=%s\n' "${workflow_blob}" >> "${GITHUB_OUTPUT}"
+printf 'cache_namespace=%s\n' "${cache_namespace}" >> "${GITHUB_OUTPUT}"
 "#;
 
 const VELNOR_AUTHORITY_CAPTURE_SCRIPT: &str = r#"set -euo pipefail
