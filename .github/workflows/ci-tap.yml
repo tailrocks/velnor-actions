@@ -216,9 +216,6 @@ jobs:
     # This is explicit policy routing, not silent failover.
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'ubuntu-latest' || 'velnor-trusted' }}
     timeout-minutes: 30
-    concurrency:
-      group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}
-      cancel-in-progress: false
     outputs:
       contract: ${{ steps.aggregate.outputs.contract }}
     steps:
@@ -419,9 +416,6 @@ jobs:
     if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && (inputs.lane == 'github' || inputs.lane == 'both' || (inputs.lane == '' && github.repository_owner == 'jackin-project')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    concurrency:
-      group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}
-      cancel-in-progress: false
     outputs:
       contract: ${{ steps.aggregate.outputs.contract }}
     steps:
@@ -976,12 +970,11 @@ jobs:
             local mode="$1" role="$2" github_hit="$3" velnor_hit="$4"
             [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${role}" =~ ^(target|non-target)$ ]]
             [[ "${github_hit}" == "${velnor_hit}" ]]
-            if [[ "${mode}" == normal || ( "${mode}" == enabled && "${role}" == target ) ]]; then
+            if [[ "${role}" == non-target || "${mode}" == normal || "${mode}" == enabled ]]; then
               if [[ "${github_hit}" == true ]]; then printf 'hit\n'; else printf 'miss\n'; fi
-            elif [[ "${mode}" == disabled && "${role}" == target ]]; then
-              [[ "${github_hit}" != true ]]; printf 'ignored\n'
             else
-              [[ "${github_hit}" == true ]]; printf 'ignored\n'
+              [[ "${mode}" == disabled && "${role}" == target && "${github_hit}" != true ]]
+              printf 'ignored\n'
             fi
           }
           selected=0

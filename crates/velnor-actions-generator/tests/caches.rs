@@ -415,11 +415,22 @@ fn benchmark_fresh_seed_publishes_and_identical_warm_reuse_does_not() {
         benchmark_cache_state("disabled", "target", "false", "false").as_deref(),
         Some("ignored\n")
     );
-    assert!(benchmark_cache_state("enabled", "non-target", "false", "false").is_none());
+    assert_eq!(
+        benchmark_cache_state("enabled", "non-target", "false", "false").as_deref(),
+        Some("miss\n")
+    );
     assert!(benchmark_cache_state("enabled", "non-target", "true", "false").is_none());
     assert_eq!(
         benchmark_cache_state("enabled", "non-target", "true", "true").as_deref(),
-        Some("ignored\n")
+        Some("hit\n")
+    );
+    assert_eq!(
+        benchmark_cache_state("disabled", "non-target", "false", "false").as_deref(),
+        Some("miss\n")
+    );
+    assert_eq!(
+        benchmark_cache_state("disabled", "non-target", "true", "true").as_deref(),
+        Some("hit\n")
     );
 }
 
@@ -734,16 +745,10 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
         publisher["concurrency"]["cancel-in-progress"].as_bool(),
         Some(false)
     );
-    assert_eq!(
-        jobs["github-lane"]["concurrency"]["group"].as_str(),
-        publisher["concurrency"]["group"].as_str()
-    );
-    assert!(
-        jobs["velnor-lane"]["concurrency"]["group"]
-            .as_str()
-            .unwrap()
-            .contains("&& 'github' || 'velnor'")
-    );
+    // Ordinary CI on unrelated refs must never share GitHub's lossy concurrency
+    // queue. Only authenticated proof publication is serialized.
+    assert!(jobs["github-lane"]["concurrency"].is_badvalue());
+    assert!(jobs["velnor-lane"]["concurrency"].is_badvalue());
     for lane in ["github_restore", "velnor_restore"] {
         let restore = jobs[lane]["steps"]
             .as_vec()

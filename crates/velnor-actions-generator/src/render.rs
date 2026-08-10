@@ -382,9 +382,6 @@ pub fn callable_workflow(
         "runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'ubuntu-latest' || 'velnor-trusted' }}",
     );
     b.line(4, "timeout-minutes: 30");
-    b.line(4, "concurrency:");
-    b.line(6, "group: velnor-cache-writer-${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'github' || 'velnor' }}-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}");
-    b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
     b.line(4, "steps:");
@@ -418,12 +415,6 @@ pub fn callable_workflow(
     );
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 30");
-    b.line(4, "concurrency:");
-    b.line(
-        6,
-        "group: velnor-cache-writer-github-${{ github.repository }}-${{ needs.validate-request.outputs.cache_namespace }}",
-    );
-    b.line(6, "cancel-in-progress: false");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
     b.line(4, "steps:");
@@ -1441,12 +1432,11 @@ benchmark_cache_state() {
   local mode="$1" role="$2" github_hit="$3" velnor_hit="$4"
   [[ "${mode}" =~ ^(normal|enabled|disabled)$ && "${role}" =~ ^(target|non-target)$ ]]
   [[ "${github_hit}" == "${velnor_hit}" ]]
-  if [[ "${mode}" == normal || ( "${mode}" == enabled && "${role}" == target ) ]]; then
+  if [[ "${role}" == non-target || "${mode}" == normal || "${mode}" == enabled ]]; then
     if [[ "${github_hit}" == true ]]; then printf 'hit\n'; else printf 'miss\n'; fi
-  elif [[ "${mode}" == disabled && "${role}" == target ]]; then
-    [[ "${github_hit}" != true ]]; printf 'ignored\n'
   else
-    [[ "${github_hit}" == true ]]; printf 'ignored\n'
+    [[ "${mode}" == disabled && "${role}" == target && "${github_hit}" != true ]]
+    printf 'ignored\n'
   fi
 }"#;
 
