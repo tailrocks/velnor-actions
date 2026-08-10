@@ -591,6 +591,8 @@ fn run_proof_contract(overrides: &[(&str, &str)]) -> bool {
     command.env("CACHE_PUBLISH", "skipped");
     command.env("TEMPERATURE", "warm");
     command.env("BENCHMARK_MODE", "");
+    command.env("CACHE_PROOF_ID", "proof");
+    command.env("BENCHMARK_CAMPAIGN", "");
     for (key, value) in overrides {
         command.env(key, value);
     }
@@ -616,11 +618,13 @@ fn proof_contract_rejects_early_execute_and_wrong_publisher_truth() {
         ("CACHE_PUBLISH", "success"),
     ]));
     assert!(!run_proof_contract(&[
+        ("CACHE_PROOF_ID", ""),
+        ("BENCHMARK_CAMPAIGN", "campaign"),
         ("BENCHMARK_MODE", "enabled"),
-        ("CACHE_PUBLISH", "success"),
     ]));
     assert!(run_proof_contract(&[
-        ("TEMPERATURE", "cold"),
+        ("CACHE_PROOF_ID", ""),
+        ("BENCHMARK_CAMPAIGN", "campaign"),
         ("BENCHMARK_MODE", "enabled"),
         ("CACHE_PUBLISH", "success"),
     ]));
@@ -658,7 +662,9 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
     let condition = publisher["if"].as_str().unwrap();
     assert!(condition.contains("inputs.cache_temperature == 'cold'"));
     assert!(condition.contains("inputs.benchmark_cache_mode == 'enabled'"));
-    assert!(condition.contains("inputs.cache_temperature == 'cold' && ("));
+    assert!(
+        condition.contains("inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold'")
+    );
     assert_eq!(
         publisher["concurrency"]["group"].as_str(),
         Some("velnor-cache-publisher-${{ github.repository }}")
@@ -686,6 +692,23 @@ fn parsed_proof_yaml_prevents_lane_warm_and_duplicate_publisher_saves() {
             step["name"].as_str() == Some("Restore published dependencies identity")
         })
     );
+    let publisher_steps = publisher["steps"].as_vec().unwrap();
+    let preflight = publisher_steps
+        .iter()
+        .position(|step| {
+            step["name"].as_str() == Some("Probe dependencies immediately before publication")
+        })
+        .unwrap();
+    let save = publisher_steps
+        .iter()
+        .position(|step| step["name"].as_str() == Some("Publish dependencies exactly once"))
+        .unwrap();
+    assert!(preflight < save);
+    assert!(publisher_steps.iter().any(|step| {
+        step["name"].as_str() == Some("Reject existing dependencies publication identity")
+            && step["run"].as_str().unwrap().contains("CACHE_HIT")
+            && step["run"].as_str().unwrap().contains("!= true")
+    }));
     assert!(!condition.contains("inputs.cache_temperature == 'warm'"));
     let save_steps = publisher["steps"]
         .as_vec()

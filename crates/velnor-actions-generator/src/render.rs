@@ -1038,7 +1038,7 @@ fn render_cache_proof_jobs(
     b.line(6, "- github_execute");
     b.line(6, "- velnor_execute");
     b.line(6, "- proof_reconcile");
-    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && inputs.cache_temperature == 'cold' && (inputs.cache_proof_id != '' || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
+    b.line(4, "if: ${{ always() && needs.restore_barrier.result == 'success' && needs.github_execute.result == 'success' && needs.velnor_execute.result == 'success' && needs.proof_reconcile.result == 'success' && needs.proof_reconcile.outputs.contract == 'success' && ((inputs.cache_proof_id != '' && inputs.cache_temperature == 'cold') || (inputs.benchmark_campaign != '' && inputs.benchmark_cache_mode == 'enabled')) }}");
     b.line(4, "runs-on: ubuntu-latest");
     b.line(4, "timeout-minutes: 20");
     b.line(4, "concurrency:");
@@ -1071,6 +1071,40 @@ fn render_cache_proof_jobs(
         let selected = format!(
             "${{{{ inputs.cache_proof_id != '' || inputs.benchmark_cache_id == '{id}' }}}}"
         );
+        b.line(
+            6,
+            &format!("- name: Clean {id} in-lock preflight destination"),
+        );
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.run_block(8, &clean_cache_script(cache));
+        b.line(
+            6,
+            &format!("- name: Probe {id} immediately before publication"),
+        );
+        b.line(8, &format!("id: preflight-publish-{id}"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(
+            8,
+            &format!("uses: actions/cache/restore@{CACHE_ACTION_REF} # {CACHE_ACTION_VERSION}"),
+        );
+        cache_action_with(b, contract.class, cache, false);
+        b.line(
+            6,
+            &format!("- name: Reject existing {id} publication identity"),
+        );
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.line(8, "env:");
+        b.line(
+            10,
+            &format!("CACHE_HIT: ${{{{ steps.preflight-publish-{id}.outputs.cache-hit }}}}"),
+        );
+        b.run_block(8, "set -euo pipefail\n[[ \"${CACHE_HIT}\" != true ]]");
+        b.line(6, &format!("- name: Clean {id} after in-lock preflight"));
+        b.line(8, &format!("if: {selected}"));
+        b.line(8, "shell: bash");
+        b.run_block(8, &clean_cache_script(cache));
         b.line(
             6,
             &format!("- name: Materialize deterministic {id} post-state"),
@@ -1197,6 +1231,8 @@ fn render_cache_proof_jobs(
     }
     b.line(10, "TEMPERATURE: ${{ inputs.cache_temperature }}");
     b.line(10, "BENCHMARK_MODE: ${{ inputs.benchmark_cache_mode }}");
+    b.line(10, "CACHE_PROOF_ID: ${{ inputs.cache_proof_id }}");
+    b.line(10, "BENCHMARK_CAMPAIGN: ${{ inputs.benchmark_campaign }}");
     b.run_block(8, PROOF_CONTRACT_SCRIPT);
     b.blank();
 }
@@ -1610,7 +1646,13 @@ for result in "${GITHUB_RESTORE}" "${VELNOR_RESTORE}" "${RESTORE_BARRIER}" "${GI
   [[ "${result}" == success ]] || { echo "proof DAG result ${result}, expected success" >&2; exit 1; }
 done
 publish_expected=false
-[[ "${TEMPERATURE}" == cold && ( -z "${BENCHMARK_MODE}" || "${BENCHMARK_MODE}" == enabled ) ]] && publish_expected=true
+if [[ -n "${CACHE_PROOF_ID}" ]]; then
+  [[ "${TEMPERATURE}" == cold ]] && publish_expected=true
+elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
+  [[ "${BENCHMARK_MODE}" == enabled ]] && publish_expected=true
+else
+  echo "missing proof operation identity" >&2; exit 1
+fi
 if ${publish_expected}; then
   [[ "${CACHE_PUBLISH}" == success ]] || { echo "cold/enabled proof publisher did not succeed" >&2; exit 1; }
 else
@@ -2059,7 +2101,7 @@ elif [[ -n "${BENCHMARK_CAMPAIGN}" ]]; then
   [[ "${BENCHMARK_FANOUT}" =~ ^(1|8)$ ]] || fail "unknown benchmark fanout"
   is_id "${BENCHMARK_WAVE}" || fail "invalid benchmark wave"
   is_id "${BENCHMARK_RESERVATION}" || fail "invalid benchmark reservation"
-  [[ -z "${CACHE_PROOF_ID}" ]] || fail "benchmark cannot combine with cache proof"
+  [[ -z "${CACHE_PROOF_ID}${CACHE_GENERATION}${CACHE_TEMPERATURE}" ]] || fail "benchmark cannot combine with cache-proof fields"
   correlation="${BENCHMARK_CAMPAIGN}:${BENCHMARK_WAVE}"
 elif [[ -n "${CACHE_PROOF_ID}" ]]; then
   protected_dispatch

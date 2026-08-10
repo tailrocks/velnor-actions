@@ -381,6 +381,9 @@ fn benchmark_dispatch_rejects_tag_target_or_blob_mismatch() {
     let mut benchmark_generation_overflow = common.to_vec();
     benchmark_generation_overflow.push(("BENCHMARK_GENERATION", "2"));
     assert!(!run_request_validator(&benchmark_generation_overflow));
+    let mut benchmark_with_cache_proof_field = common.to_vec();
+    benchmark_with_cache_proof_field.push(("CACHE_TEMPERATURE", "cold"));
+    assert!(!run_request_validator(&benchmark_with_cache_proof_field));
     assert!(!run_request_validator(&[
         ("PATH", path.as_str()),
         ("EVENT_NAME", "workflow_dispatch"),
