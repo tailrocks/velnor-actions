@@ -94,14 +94,14 @@ impl PackagePolicy {
             {
                 return Err(format!("{} has an unsafe asset pattern", row.slug));
             }
-            let expected_suffix = if row.kind == "tap" { ".tar.gz" } else { ".deb" };
-            if row
-                .assets
-                .iter()
-                .any(|asset| !asset.ends_with(expected_suffix))
-            {
+            let valid_package_format = |asset: &str| match row.kind.as_str() {
+                "tap" => asset.ends_with(".tar.gz") || asset.ends_with(".zip"),
+                "apt" => asset.ends_with(".deb"),
+                _ => false,
+            };
+            if row.assets.iter().any(|asset| !valid_package_format(asset)) {
                 return Err(format!(
-                    "{} has an asset outside its package format {expected_suffix}",
+                    "{} has an asset outside its package formats",
                     row.slug
                 ));
             }

@@ -159,7 +159,8 @@ fn package_policy_and_workflows_are_closed_and_hosted_only() {
     let package_policy = std::fs::read_to_string(common::repo_root().join("fleet/packages.toml"))
         .expect("package policy bytes");
     assert!(!package_policy.contains(".tar.xz"));
-    assert_eq!(package_policy.matches(".tar.gz").count(), 8);
+    assert_eq!(package_policy.matches(".tar.gz").count(), 16);
+    assert_eq!(package_policy.matches(".zip").count(), 2);
     for body in [
         SIGNER_WORKFLOW,
         UPDATER_WORKFLOW,
