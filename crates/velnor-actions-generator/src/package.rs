@@ -27,6 +27,7 @@ struct Consumer {
     kind: String,
     source: String,
     source_ref: String,
+    signer_digest: String,
     channels: Vec<String>,
     assets: Vec<String>,
 }
@@ -73,6 +74,9 @@ impl PackagePolicy {
             }
             if row.source_ref != "refs/tags/v*" {
                 return Err(format!("{} has mutable or unknown source_ref", row.slug));
+            }
+            if !is_sha40(&row.signer_digest) {
+                return Err(format!("{} has an invalid signer_digest", row.slug));
             }
             if row.channels.is_empty() || row.assets.is_empty() {
                 return Err(format!(
@@ -168,7 +172,7 @@ impl PackagePolicy {
         let (old_digest, activated_at, expires_at) = match old_signer {
             None => ("", "", ""),
             Some((digest, activated, expires)) => {
-                if !is_sha40(digest) || digest == release_sha {
+                if !is_sha40(digest) || digest == row.signer_digest {
                     return Err("old signer digest must be a distinct 40-hex SHA".into());
                 }
                 if !looks_rfc3339_utc(activated) || !looks_rfc3339_utc(expires) {
@@ -185,7 +189,7 @@ impl PackagePolicy {
         let rendered = template
             .replace("@FLEET_SHA@", release_sha)
             .replace("@CALVER@", calver)
-            .replace("@CURRENT_SIGNER_DIGEST@", release_sha)
+            .replace("@CURRENT_SIGNER_DIGEST@", &row.signer_digest)
             .replace("@OLD_SIGNER_DIGEST@", old_digest)
             .replace("@OLD_SIGNER_ACTIVATED_AT@", activated_at)
             .replace("@OLD_SIGNER_EXPIRES_AT@", expires_at);

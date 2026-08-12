@@ -231,7 +231,13 @@ fn package_consumer_renderer_binds_current_and_bounded_old_signers() {
             Some((old, "2026-08-12T00:00:00Z", "2026-09-11T00:00:00Z")),
         )
         .expect("bounded rotation renders");
-    assert_eq!(rendered.matches(current).count(), 6);
+    assert_eq!(rendered.matches(current).count(), 3);
+    assert_eq!(
+        rendered
+            .matches("1e062d5bbe329873047ee8a8e79bba0811e53b65")
+            .count(),
+        3
+    );
     assert_eq!(rendered.matches(old).count(), 3);
     assert!(!rendered.contains("@FLEET_SHA@"));
     assert!(rendered.contains("old-signer-expires-at: \"2026-09-11T00:00:00Z\""));
@@ -257,7 +263,11 @@ fn package_consumer_renderer_binds_current_and_bounded_old_signers() {
                 "tailrocks/homebrew-tablerock",
                 current,
                 "2026.8.6",
-                Some((current, "2026-08-12T00:00:00Z", "2026-09-11T00:00:00Z")),
+                Some((
+                    "1e062d5bbe329873047ee8a8e79bba0811e53b65",
+                    "2026-08-12T00:00:00Z",
+                    "2026-09-11T00:00:00Z"
+                )),
             )
             .is_err()
     );
