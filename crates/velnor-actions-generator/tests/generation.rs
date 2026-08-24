@@ -306,7 +306,17 @@ fn package_policy_and_workflows_are_closed_and_lane_selectable() {
         assert!(template.contains(
             "concurrency:\n  group: ${{ github.workflow }}-${{ github.repository }}\n  cancel-in-progress: false"
         ));
-        assert!(template.contains("options: [velnor, github, both]\n        default: velnor"));
+        assert!(template.contains(
+            "      lane:\n        description: \"CI runner: Velnor (default), GitHub, or both.\"\n        required: false\n        type: choice\n        default: velnor\n        options:\n          - velnor\n          - github\n          - both"
+        ));
+        assert!(
+            !template.contains("lanes:"),
+            "package-update dispatch must expose the sole lane selector"
+        );
+        assert!(
+            !template.contains("inputs.lanes"),
+            "package-update matrix and runs-on must read inputs.lane"
+        );
         assert!(template.contains(
             "{\"lane\":\"velnor\",\"writer\":true},{\"lane\":\"github\",\"writer\":false}"
         ));

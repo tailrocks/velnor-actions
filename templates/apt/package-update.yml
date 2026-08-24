@@ -7,11 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       lane:
-        description: "CI runner: Velnor (default), GitHub, or both. Velnor is the sole writer in both mode."
+        description: "CI runner: Velnor (default), GitHub, or both."
         required: false
         type: choice
-        options: [velnor, github, both]
         default: velnor
+        options:
+          - velnor
+          - github
+          - both
 
 permissions:
   attestations: read
