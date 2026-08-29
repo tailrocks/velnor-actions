@@ -19,6 +19,7 @@ const SCHEMA: u32 = 1;
 
 /// One generator-owned tool policy entry.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ToolSpec {
     /// Exact non-floating version consumed by mise.
     pub version: String,
@@ -33,6 +34,7 @@ pub struct ToolSpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RegistryDocument {
     schema: u32,
     tools: BTreeMap<String, ToolSpec>,
@@ -181,50 +183,31 @@ impl ToolRegistry {
 
     /// Check one mise file and its lockfile against the registry.
     pub fn check_files(&self, mise: &Path, lock: &Path) -> Result<usize, String> {
-        self.check_files_inner(mise, lock, false)
+        self.check_files_inner(mise, lock)
     }
 
-    /// Check the generator's own mise graph. Rust is the one intentional
-    /// exception: mise installs it from the root declaration while the fleet
-    /// registry governs the non-Rust tool graph.
+    /// Check the generator's own mise graph. Rust is derived from the sibling
+    /// rust-toolchain.toml; the fleet registry governs the non-Rust tool graph.
     pub fn check_generator_files(&self, mise: &Path, lock: &Path) -> Result<usize, String> {
-        self.check_files_inner(mise, lock, true)
+        self.check_files_inner(mise, lock)
     }
 
-    fn check_files_inner(
-        &self,
-        mise: &Path,
-        lock: &Path,
-        allow_generator_rust: bool,
-    ) -> Result<usize, String> {
+    fn check_files_inner(&self, mise: &Path, lock: &Path) -> Result<usize, String> {
         let mise_body = fs::read_to_string(mise)
             .map_err(|error| format!("reading mise file {}: {error}", mise.display()))?;
-        let mut effective = self.parse_mise_inner(&mise_body, mise, allow_generator_rust)?;
-        if allow_generator_rust {
-            let rust_toolchain = mise
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("rust-toolchain.toml");
-            let rust_version = rust_toolchain_version(&rust_toolchain)?;
-            if let Some(rust) = effective.iter().find(|tool| tool.name == "rust") {
-                if rust.version != rust_version {
-                    return Err(format!(
-                        "{}: mise rust pin {:?} diverges from rust-toolchain.toml channel {:?}",
-                        mise.display(),
-                        rust.version,
-                        rust_version
-                    ));
-                }
-            } else {
-                effective.push(EffectiveTool {
-                    key: "rust".to_owned(),
-                    name: "rust".to_owned(),
-                    source: "rust-toolchain.toml".to_owned(),
-                    backend: "core:rust".to_owned(),
-                    version: rust_version,
-                });
-            }
-        }
+        let mut effective = self.parse_mise(&mise_body, mise)?;
+        let rust_toolchain = mise
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("rust-toolchain.toml");
+        let rust_version = rust_toolchain_version(&rust_toolchain)?;
+        effective.push(EffectiveTool {
+            key: "rust".to_owned(),
+            name: "rust".to_owned(),
+            source: "rust-toolchain.toml".to_owned(),
+            backend: "core:rust".to_owned(),
+            version: rust_version,
+        });
         self.check_rendered_equality(&effective, mise)?;
         let lock_body = fs::read_to_string(lock)
             .map_err(|error| format!("reading lockfile {}: {error}", lock.display()))?;
@@ -288,15 +271,6 @@ impl ToolRegistry {
     }
 
     fn parse_mise(&self, body: &str, path: &Path) -> Result<Vec<EffectiveTool>, String> {
-        self.parse_mise_inner(body, path, false)
-    }
-
-    fn parse_mise_inner(
-        &self,
-        body: &str,
-        path: &Path,
-        allow_generator_rust: bool,
-    ) -> Result<Vec<EffectiveTool>, String> {
         let document: Value = toml::from_str(body)
             .map_err(|error| format!("parsing mise file {}: {error}", path.display()))?;
         let tools = document
@@ -307,36 +281,13 @@ impl ToolRegistry {
         let mut seen = BTreeSet::new();
         for (key, value) in tools {
             let (version, explicit_source) = tool_value(value, key, path)?;
-            if key == "rust" && !allow_generator_rust {
+            if key == "rust" {
                 return Err(format!(
                     "{}: rust pin is forbidden; use rust-toolchain.toml",
                     path.display()
                 ));
             }
             validate_version(key, &version)?;
-            if key == "rust" {
-                let source = explicit_source.unwrap_or_else(|| "core:rust".to_owned());
-                if source != "core:rust" {
-                    return Err(format!(
-                        "{}: generator rust must use mise core:rust, found {source:?}",
-                        path.display()
-                    ));
-                }
-                if !seen.insert(key.clone()) {
-                    return Err(format!(
-                        "{}: tool {key:?} is declared more than once",
-                        path.display()
-                    ));
-                }
-                effective.push(EffectiveTool {
-                    key: key.clone(),
-                    name: key.clone(),
-                    source,
-                    backend: "core:rust".to_owned(),
-                    version,
-                });
-                continue;
-            }
             let (name, spec) = self.resolve(key, explicit_source.as_deref(), path)?;
             let source = &spec.source;
             let backend = spec.backend.as_deref().unwrap_or(source).to_owned();
@@ -523,6 +474,14 @@ fn tool_value(value: &Value, key: &str, path: &Path) -> Result<(String, Option<S
     match value {
         Value::String(version) => Ok((version.clone(), None)),
         Value::Table(table) => {
+            for field in table.keys() {
+                if !matches!(field.as_str(), "version" | "source") {
+                    return Err(format!(
+                        "{}: tool {key:?} has unsupported field {field:?}",
+                        path.display()
+                    ));
+                }
+            }
             let version = table
                 .get("version")
                 .and_then(Value::as_str)
@@ -566,7 +525,15 @@ fn validate_version(name: &str, version: &str) -> Result<(), String> {
 }
 
 fn validate_source(name: &str, source: &str) -> Result<(), String> {
-    if source.trim().is_empty()
+    let valid = if let Some((prefix, target)) = source.split_once(':') {
+        !target.is_empty() && matches!(prefix, "aqua" | "cargo" | "core" | "github")
+    } else {
+        source
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    };
+    if !valid
+        || source.trim().is_empty()
         || source.chars().any(char::is_whitespace)
         || source.starts_with(':')
         || source.ends_with(':')
