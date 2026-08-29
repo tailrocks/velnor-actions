@@ -60,7 +60,7 @@ applicability = "both"
 
 [[native.gates]]
 name = "build"
-command = "mise run ci"
+command = "mise run build"
 applicability = "both"
 
 [[native.gates]]

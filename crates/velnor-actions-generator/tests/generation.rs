@@ -848,7 +848,7 @@ fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
         ),
         (
             ".github/workflows/ci-native.yml",
-            "4d042b9fe8f95d12c91933a2f6459b8db04fbe7910366882f17fef56ac0e0c4e",
+            "8ae26da45863b7fb76ff2777477cedfffcdbbf4865840a3be7b34cab79fc1b6a",
         ),
         (
             ".github/workflows/ci-tap.yml",
