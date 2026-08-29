@@ -844,11 +844,11 @@ fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
         ),
         (
             ".github/workflows/ci-code.yml",
-            "537c97db0deae2299357eb8380908d2da140a15708152f86de8d20c93f22182a",
+            "e14ba3107a6fb1ac50ac13c478a135573f1a8e5532b53804a1df79aeb2a4e607",
         ),
         (
             ".github/workflows/ci-native.yml",
-            "8ae26da45863b7fb76ff2777477cedfffcdbbf4865840a3be7b34cab79fc1b6a",
+            "c5caadae9ce0a3b6ff63039335b7a9eb4bb830d434924aec8c408ee608cbdfc3",
         ),
         (
             ".github/workflows/ci-tap.yml",

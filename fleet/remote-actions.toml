@@ -30,12 +30,12 @@ files = [
 ]
 
 [[action]]
-root = "mozilla-actions/sccache-action"
-sha = "fc920bf0ec8de6ee65d409111f7ec508035751ba"
+root = "kunobi-ninja/kache-action"
+sha = "78ff455251aa37139061201a39113a1924994035"
 files = [
-  { path = "action.yml", kind = "manifest", sha256 = "df12a8d986d8a04b8a63c165d2dc0fe0ee3567ffbd54b82cdd8bd6512cc0c7b5" },
-  { path = "dist/setup/index.js", kind = "behavior", sha256 = "2f4dacfe34d9fa83a109b9fc1c80364e4347561b57506eaebd25af6e5bf361f6" },
-  { path = "dist/show_stats/index.js", kind = "behavior", sha256 = "d77e050c31d1f803b195f4674cd753c9d4b37df80c97d4a41dda25ae469aae99" },
+  { path = "action.yml", kind = "manifest", sha256 = "ccc9a3e691aae06f87cda1d3f7fad443e9b6a21bdd531235ad56b5a7a4cbbca3" },
+  { path = "dist/setup/index.js", kind = "behavior", sha256 = "1fdadd952f76b77e4ab27b6becb435704d18966d090d0f913e76b76ed3d82007" },
+  { path = "dist/save/index.js", kind = "behavior", sha256 = "8e608a2c870d794cb5a93f311c29a3e48adba8c69e456de2b7d378940030e5a4" },
 ]
 
 [[action]]

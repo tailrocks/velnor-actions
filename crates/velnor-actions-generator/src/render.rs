@@ -42,9 +42,16 @@ const CHECKOUT_VERSION: &str = "v7.0.1";
 /// Pinned mise setup action (full 40-hex SHA) and its version comment.
 const MISE_ACTION_REF: &str = "7e36c90d9ab29c415a2384db3006f3ec8a8cc654";
 const MISE_ACTION_VERSION: &str = "v4.2.4";
-/// Pinned local compiler-cache action.
-const SCCACHE_ACTION_REF: &str = "fc920bf0ec8de6ee65d409111f7ec508035751ba";
-const SCCACHE_ACTION_VERSION: &str = "v0.0.11";
+/// Pinned content-addressed Rust build-cache action (kache), the fleet's
+/// selected compiler-cache backend. Both lanes carry the identical step: the
+/// GitHub-hosted lane executes the upstream JS action and the Velnor lane
+/// intercepts it natively — the same one-GitHub-compatible-workflow contract
+/// as every other setup action. The Velnor runner admits exactly this input
+/// set, and `version` matches the kache binary shipped in the Velnor job
+/// image. sccache remains a rollback backend in the runner, never nested
+/// beside kache in one job.
+const KACHE_ACTION_REF: &str = "78ff455251aa37139061201a39113a1924994035";
+const KACHE_ACTION_VERSION: &str = "v1";
 /// Default platform-lane job timeout unless a class overrides it.
 const DEFAULT_PLATFORM_TIMEOUT_MINUTES: u32 = 30;
 /// Pinned GitHub cache action.
@@ -437,9 +444,7 @@ pub fn callable_workflow(
     if matches!(class, RepositoryClass::Code | RepositoryClass::Native) {
         b.line(4, "env:");
         b.line(6, "CARGO_INCREMENTAL: \"0\"");
-        b.line(6, "RUSTC_WRAPPER: sccache");
-        b.line(6, "SCCACHE_CACHE_SIZE: 20G");
-        b.line(6, "SCCACHE_GHA_ENABLED: \"false\"");
+        b.line(6, "RUSTC_WRAPPER: kache");
     }
     b.line(4, "steps:");
     lane_steps(
@@ -467,9 +472,7 @@ pub fn callable_workflow(
     if matches!(class, RepositoryClass::Code | RepositoryClass::Native) {
         b.line(4, "env:");
         b.line(6, "CARGO_INCREMENTAL: \"0\"");
-        b.line(6, "RUSTC_WRAPPER: sccache");
-        b.line(6, "SCCACHE_CACHE_SIZE: 20G");
-        b.line(6, "SCCACHE_GHA_ENABLED: \"false\"");
+        b.line(6, "RUSTC_WRAPPER: kache");
     }
     b.line(4, "steps:");
     lane_steps(
@@ -2093,16 +2096,17 @@ fn lane_steps(
         contract.class,
         RepositoryClass::Code | RepositoryClass::Native
     ) {
-        b.line(6, "- name: Set up local sccache");
+        b.line(6, "- name: Set up local Kache");
         b.line(
             8,
-            &format!(
-                "uses: mozilla-actions/sccache-action@{SCCACHE_ACTION_REF} # {SCCACHE_ACTION_VERSION}"
-            ),
+            &format!("uses: kunobi-ninja/kache-action@{KACHE_ACTION_REF} # {KACHE_ACTION_VERSION}"),
         );
         b.line(8, "with:");
         b.line(10, "version: v0.16.0");
-        b.line(10, "disable_annotations: \"false\"");
+        b.line(10, "github-cache: \"false\"");
+        b.line(10, "cache-executables: \"false\"");
+        b.line(10, "pr-comment: \"false\"");
+        b.line(10, "max-size: 20GiB");
     }
     b.line(6, "- name: Set up mise toolchain");
     b.line(
