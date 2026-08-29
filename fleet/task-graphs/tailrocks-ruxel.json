@@ -1,0 +1,80 @@
+{
+  "slug": "tailrocks/ruxel",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "build",
+      "cmd": "cargo build --all-targets --all-features --locked",
+      "dir": ".",
+      "leaf_identity": "cargo build --all-targets --all-features --locked|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "build",
+        "test",
+        "lint",
+        "fmt"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all --check|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo clippy --all-targets -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "cargo clippy --all-targets -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --all-features --color=always --no-tests=pass",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --all-features --color=always --no-tests=pass|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo build --all-targets --all-features --locked|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "cargo clippy --all-targets -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --all-features --color=always --no-tests=pass|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

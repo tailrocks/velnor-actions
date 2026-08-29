@@ -1,0 +1,98 @@
+{
+  "slug": "tailrocks/velnor-actions-fixture",
+  "class": "fixture",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "audit-workflows",
+      "cmd": "python3 .github/scripts/audit_workflow_surface.py",
+      "dir": ".",
+      "leaf_identity": "python3 .github/scripts/audit_workflow_surface.py|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "cargo build --workspace --locked",
+      "dir": ".",
+      "leaf_identity": "cargo build --workspace --locked|dir=.|env="
+    },
+    {
+      "name": "check",
+      "depends": [
+        "actionlint",
+        "audit-workflows",
+        "l2-closure",
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "cmd": "rustup component add rustfmt && cargo fmt --all --check",
+      "dir": ".",
+      "leaf_identity": "rustup component add rustfmt && cargo fmt --all --check|dir=.|env="
+    },
+    {
+      "name": "l2-closure",
+      "cmd": "cargo run --locked -p l2-contract -- validate",
+      "dir": ".",
+      "leaf_identity": "cargo run --locked -p l2-contract -- validate|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "rustup component add clippy && cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "rustup component add clippy && cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --workspace --locked",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --workspace --locked|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo build --workspace --locked|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --workspace --locked|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "rustup component add clippy && cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "rustup component add rustfmt && cargo fmt --all --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    }
+  ],
+  "findings": []
+}

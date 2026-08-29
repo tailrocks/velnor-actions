@@ -1,0 +1,135 @@
+{
+  "slug": "tailrocks/termrock",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "bless-pngs",
+      "cmd": "TERMROCK_BLESS_PNGS=1 cargo nextest run -p termrock-lookbook --all-features --test png_baselines --no-capture",
+      "dir": ".",
+      "leaf_identity": "TERMROCK_BLESS_PNGS=1 cargo nextest run -p termrock-lookbook --all-features --test png_baselines --no-capture|dir=.|env="
+    },
+    {
+      "name": "bless-previews",
+      "cmd": "TERMROCK_BLESS_PREVIEWS=1 cargo nextest run -p termrock-lookbook --all-features --test goldens --no-capture",
+      "dir": ".",
+      "leaf_identity": "TERMROCK_BLESS_PREVIEWS=1 cargo nextest run -p termrock-lookbook --all-features --test goldens --no-capture|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "cargo build --workspace --all-targets --all-features --locked",
+      "dir": ".",
+      "leaf_identity": "cargo build --workspace --all-targets --all-features --locked|dir=.|env="
+    },
+    {
+      "name": "check",
+      "depends": [
+        "docs-quality",
+        "fmt",
+        "lint",
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "check"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "contracts",
+      "cmd": "bun run docs/scripts/check-contracts.ts\n",
+      "dir": ".",
+      "leaf_identity": "bun run docs/scripts/check-contracts.ts|dir=.|env="
+    },
+    {
+      "name": "docs-quality",
+      "cmd": "if grep -rEn 'Documentation for `|Performs the `[a-z_]+` operation|Selects the `[A-Za-z]+` behavior|Creates a new value with canonical defaults|Data carried by `|Available `[A-Za-z]+` choices|The `[A-Za-z]+ \\{|Returns whether `[a-z_]+`[.]|Handles the `[a-z_]+` interaction[.]|Sets `[a-z_]+`[.]|Creates a value from `[a-z_]+`[.]|Returns this value with `[a-z_]+` configured[.]|The `[A-Z_]+` constant[.]|The `[A-Za-z_]+;` value produced by this contract[.]|Reports [a-z][a-z ]+[.]|Renders `[a-z_]+` output[.]|Styles [a-z][a-z ]+ content[.]' crates/ --include='*.rs'; then\n  echo 'placeholder rustdoc phrasing is forbidden' >&2\n  exit 1\nfi\nif grep -rEn 'Removes every checked identity[.]' crates/ --include='*.rs'; then\n  echo 'copied rustdoc phrasing is forbidden' >&2\n  exit 1\nfi\nbun run docs/scripts/check-contracts.ts\n",
+      "dir": ".",
+      "leaf_identity": "if grep -rEn 'Documentation for `|Performs the `[a-z_]+` operation|Selects the `[A-Za-z]+` behavior|Creates a new value with canonical defaults|Data carried by `|Available `[A-Za-z]+` choices|The `[A-Za-z]+ \\{|Returns whether `[a-z_]+`[.]|Handles the `[a-z_]+` interaction[.]|Sets `[a-z_]+`[.]|Creates a value from `[a-z_]+`[.]|Returns this value with `[a-z_]+` configured[.]|The `[A-Z_]+` constant[.]|The `[A-Za-z_]+;` value produced by this contract[.]|Reports [a-z][a-z ]+[.]|Renders `[a-z_]+` output[.]|Styles [a-z][a-z ]+ content[.]' crates/ --include='*.rs'; then echo 'placeholder rustdoc phrasing is forbidden' >&2 exit 1 fi if grep -rEn 'Removes every checked identity[.]' crates/ --include='*.rs'; then echo 'copied rustdoc phrasing is forbidden' >&2 exit 1 fi bun run docs/scripts/check-contracts.ts|dir=.|env="
+    },
+    {
+      "name": "export-preview-posters",
+      "cmd": "(cd docs && bun run build:preview-posters)\n",
+      "dir": ".",
+      "leaf_identity": "(cd docs && bun run build:preview-posters)|dir=.|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all -- --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all -- --check|dir=.|env="
+    },
+    {
+      "name": "gate",
+      "cmd": "mise run docs-quality\ncargo fmt --all -- --check\ncargo clippy --workspace --all-targets --all-features --locked -- -D warnings\ncargo nextest run --workspace --all-features --locked\nmise run preview-goldens\nmise run png-baselines\ncargo check -p termrock --no-default-features --locked\ncargo check --workspace --examples --locked\ncargo check --workspace --examples --features crossterm --locked\ncargo check -p termrock-lookbook-web --target wasm32-unknown-unknown --locked\nRUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked\nmkdir -p target\nrustup toolchain install nightly --profile minimal\nmise x cargo:cargo-public-api@0.52.0 -- cargo public-api -p termrock --all-features > target/public-api-fresh.txt\ndiff -u docs/api/public-api.txt target/public-api-fresh.txt\ncargo hack check --workspace --feature-powerset --all-targets --locked\ncargo deny check advisories bans licenses sources\ncargo shear\ncargo package -p termrock --locked --allow-dirty\n(cd docs && bun run build:preview-posters)\n(cd docs && bun install --frozen-lockfile && bun run build)\n",
+      "dir": ".",
+      "leaf_identity": "mise run docs-quality cargo fmt --all -- --check cargo clippy --workspace --all-targets --all-features --locked -- -D warnings cargo nextest run --workspace --all-features --locked mise run preview-goldens mise run png-baselines cargo check -p termrock --no-default-features --locked cargo check --workspace --examples --locked cargo check --workspace --examples --features crossterm --locked cargo check -p termrock-lookbook-web --target wasm32-unknown-unknown --locked RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked mkdir -p target rustup toolchain install nightly --profile minimal mise x cargo:cargo-public-api@0.52.0 -- cargo public-api -p termrock --all-features > target/public-api-fresh.txt diff -u docs/api/public-api.txt target/public-api-fresh.txt cargo hack check --workspace --feature-powerset --all-targets --locked cargo deny check advisories bans licenses sources cargo shear cargo package -p termrock --locked --allow-dirty (cd docs && bun run build:preview-posters) (cd docs && bun install --frozen-lockfile && bun run build)|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "png-baselines",
+      "cmd": "cargo nextest run -p termrock-lookbook --all-features --test png_baselines --locked",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run -p termrock-lookbook --all-features --test png_baselines --locked|dir=.|env="
+    },
+    {
+      "name": "preview-goldens",
+      "cmd": "cargo nextest run -p termrock-lookbook --all-features --test goldens --locked",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run -p termrock-lookbook --all-features --test goldens --locked|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --workspace --all-features --locked",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --workspace --all-features --locked|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo build --workspace --all-targets --all-features --locked|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all -- --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --workspace --all-features --locked|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

@@ -1,10 +1,14 @@
 //! Fleet data model and validation.
 //!
 //! This module owns the parsed, validated fleet: the 28-member repository
-//! manifest and the five class contracts. Parsing is fail-closed — an invalid
-//! slug, a non-40-hex SHA, a duplicate or unclassified member, a wrong per-class
-//! count, an empty gate command, or an implicit gate applicability all reject
-//! before any output is accepted.
+//! manifest and the five class contracts. Gates are data: each class declares an
+//! ordered gate list in `fleet/classes.toml`, and each member may schedule a
+//! subset of its class's gates in `fleet/repositories.toml`. Parsing is
+//! fail-closed — an invalid slug, a non-40-hex SHA, a duplicate or unclassified
+//! member, a wrong per-class count, a class with no gates, a duplicate or
+//! malformed gate name, an empty gate command, a member referencing a gate its
+//! class does not declare, or an implicit gate applicability all reject before
+//! any output is accepted.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -16,10 +20,9 @@ use crate::RepositoryClass;
 /// The three recognized fleet organizations, in canonical rendering order.
 pub const OWNERS: [&str; 3] = ["jackin-project", "tailrocks", "ChainArgos"];
 
-/// The code class's standard repository-owned project command. Repository-specific
-/// work composes beneath this single checked-in task; the shared workflow never
-/// branches on repository slug.
-pub const CODE_STANDARD_COMMAND: &str = "mise run ci";
+/// The conventional first gate: dependency installation that every other gate
+/// builds on. A class that declares it must declare it first.
+pub const INSTALL_GATE: &str = "install";
 
 /// Required member count per class, in canonical [`crate::ALL_CLASSES`] order:
 /// 19 code, 1 native, 5 tap, 2 apt, 1 fixture (total 28).
@@ -30,9 +33,6 @@ pub const REQUIRED_COUNTS: [(RepositoryClass, usize); 5] = [
     (RepositoryClass::Apt, 2),
     (RepositoryClass::Fixture, 1),
 ];
-
-/// The five ordered universal gate names every class declares.
-pub const GATE_NAMES: [&str; 5] = ["install", "build", "test", "lint", "format"];
 
 /// One lane selector. `Velnor` is the safe default; `Both` reports each lane
 /// independently.
@@ -117,7 +117,7 @@ impl Applicability {
 /// One named CI gate with its exact command and explicit applicability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gate {
-    /// Gate name (install, build, test, lint, or format).
+    /// Gate name (unique within its class, e.g. install, build, test).
     pub name: String,
     /// Exact non-empty command executed by the `run-gate` building block.
     pub command: String,
@@ -125,12 +125,39 @@ pub struct Gate {
     pub applicability: Applicability,
 }
 
+impl Gate {
+    /// The mise task this gate's command invokes, if the command is exactly a
+    /// `mise run <task>` (or `mise task <task>`) invocation. Other commands are
+    /// opaque to the task graph and are identified by their command bytes.
+    #[must_use]
+    pub fn mise_task(&self) -> Option<String> {
+        mise_task_of_command(&self.command)
+    }
+}
+
+/// Resolve the task name targeted by a `mise run <task>` / `mise task <task>`
+/// command, skipping short flag tokens. Returns `None` for any other command.
+fn mise_task_of_command(command: &str) -> Option<String> {
+    let mut tokens = command.split_whitespace();
+    if tokens.next()? != "mise" {
+        return None;
+    }
+    match tokens.next()? {
+        "run" | "task" | "r" | "t" => {}
+        _ => return None,
+    }
+    tokens
+        .find(|token| !token.starts_with('-'))
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+}
+
 /// The shared contract for one repository class.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassContract {
     /// The class this contract governs.
     pub class: RepositoryClass,
-    /// The five ordered gates (install, build, test, lint, format).
+    /// The ordered gates this class declares (one or more; unique names).
     pub gates: Vec<Gate>,
     /// Whether the class carries any genuinely platform-only gate.
     pub platform_only: bool,
@@ -151,6 +178,12 @@ impl ClassContract {
             .filter(|g| g.applicability.applies_on(lane))
             .collect()
     }
+
+    /// The gate with the given name, if this class declares one.
+    #[must_use]
+    pub fn gate(&self, name: &str) -> Option<&Gate> {
+        self.gates.iter().find(|gate| gate.name == name)
+    }
 }
 
 /// One fleet member.
@@ -164,6 +197,9 @@ pub struct Repository {
     pub class: RepositoryClass,
     /// The immutable 40-hex default-branch baseline commit.
     pub baseline_sha: String,
+    /// The gates this member schedules, in class declaration order. Members that
+    /// declare no subset schedule every gate their class declares.
+    pub gates: Vec<String>,
 }
 
 impl Repository {
@@ -184,17 +220,20 @@ pub struct FleetManifest {
 }
 
 impl FleetManifest {
-    /// Load and validate the fleet from `fleet/repositories.toml` and
-    /// `fleet/classes.toml` under `root`.
+    /// Load and validate the fleet from `fleet/classes.toml` and
+    /// `fleet/repositories.toml` under `root`.
     ///
     /// # Errors
     ///
     /// Returns `Err` for any I/O failure, TOML syntax error, or contract
     /// violation (invalid slug/SHA, duplicate or unclassified member, wrong
-    /// count, empty gate command, or implicit/invalid applicability).
+    /// count, class with no gates, duplicate or malformed gate name, empty gate
+    /// command, member gate not declared by its class, or implicit/invalid
+    /// applicability).
     pub fn load(root: &Path) -> Result<FleetManifest, String> {
-        let repositories = load_repositories(&root.join("fleet").join("repositories.toml"))?;
         let classes = load_classes(&root.join("fleet").join("classes.toml"))?;
+        let repositories =
+            load_repositories(&root.join("fleet").join("repositories.toml"), &classes)?;
         Ok(FleetManifest {
             repositories,
             classes,
@@ -230,6 +269,18 @@ impl FleetManifest {
             .filter(|r| r.class == class)
             .collect()
     }
+
+    /// The gates one member schedules, in class declaration order. Members that
+    /// declare no subset schedule every gate their class declares.
+    #[must_use]
+    pub fn scheduled_gates(&self, repository: &Repository) -> Vec<&Gate> {
+        let contract = self.class(repository.class);
+        repository
+            .gates
+            .iter()
+            .filter_map(|name| contract.gate(name))
+            .collect()
+    }
 }
 
 /// Whether `value` is exactly 40 lowercase hexadecimal characters.
@@ -261,9 +312,13 @@ struct RepoEntry {
     slug: String,
     class: String,
     baseline_sha: String,
+    /// Optional subset of the class gates this member schedules. Absent (or
+    /// empty) means every gate the class declares.
+    #[serde(default)]
+    gates: Option<Vec<String>>,
 }
 
-fn load_repositories(path: &Path) -> Result<Vec<Repository>, String> {
+fn load_repositories(path: &Path, classes: &[ClassContract]) -> Result<Vec<Repository>, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     let file: RepositoriesFile =
@@ -294,11 +349,17 @@ fn load_repositories(path: &Path) -> Result<Vec<Repository>, String> {
         if !seen.insert(entry.slug.clone()) {
             return Err(format!("duplicate member {:?}", entry.slug));
         }
+        let contract = classes
+            .iter()
+            .find(|c| c.class == class)
+            .expect("every class present after load_classes");
+        let gates = resolve_member_gates(&entry, contract)?;
         repositories.push(Repository {
             slug: entry.slug.clone(),
             organization: owner.to_string(),
             class,
             baseline_sha: entry.baseline_sha,
+            gates,
         });
     }
 
@@ -339,6 +400,41 @@ fn parse_class(token: &str) -> Option<RepositoryClass> {
         .find(|c| c.code() == token)
 }
 
+/// Validate a member's declared gate subset against its class contract and
+/// canonicalize it to class declaration order. An absent or empty declaration
+/// schedules every gate the class declares.
+fn resolve_member_gates(
+    entry: &RepoEntry,
+    contract: &ClassContract,
+) -> Result<Vec<String>, String> {
+    let Some(declared) = entry.gates.as_ref() else {
+        return Ok(contract.gates.iter().map(|g| g.name.clone()).collect());
+    };
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for gate in declared {
+        if !seen.insert(gate.as_str()) {
+            return Err(format!(
+                "member {:?} schedules gate {:?} more than once",
+                entry.slug, gate
+            ));
+        }
+        if contract.gate(gate).is_none() {
+            return Err(format!(
+                "member {:?} schedules gate {:?} which class {} does not declare",
+                entry.slug,
+                gate,
+                contract.class.code()
+            ));
+        }
+    }
+    Ok(contract
+        .gates
+        .iter()
+        .map(|g| g.name.clone())
+        .filter(|name| seen.contains(name.as_str()))
+        .collect())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClassesFile {
@@ -359,18 +455,28 @@ struct ClassEntry {
     platform_name: Option<String>,
     #[serde(default)]
     platform_timeout_minutes: Option<u32>,
-    install: GateEntry,
-    build: GateEntry,
-    test: GateEntry,
-    lint: GateEntry,
-    format: GateEntry,
+    /// The ordered gate list this class declares (`[[<class>.gates]]`). Defaults
+    /// to empty so an omitted list is rejected by load_classes with an
+    /// actionable message instead of a serde "missing field" parse error.
+    #[serde(default)]
+    gates: Vec<GateEntry>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GateEntry {
+    name: String,
     command: String,
     applicability: String,
+}
+
+/// Gate names become rendered step names and fleet task-graph identities: keep
+/// them short, lowercase, and hyphenated.
+fn valid_gate_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    matches!(bytes.next(), Some(b) if b.is_ascii_lowercase())
+        && name.len() <= 40
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 fn load_classes(path: &Path) -> Result<Vec<ClassContract>, String> {
@@ -389,29 +495,50 @@ fn load_classes(path: &Path) -> Result<Vec<ClassContract>, String> {
 
     let mut classes = Vec::with_capacity(entries.len());
     for (class, entry) in entries {
-        let ordered = [
-            ("install", entry.install),
-            ("build", entry.build),
-            ("test", entry.test),
-            ("lint", entry.lint),
-            ("format", entry.format),
-        ];
-        let mut gates = Vec::with_capacity(ordered.len());
+        if entry.gates.is_empty() {
+            return Err(format!(
+                "class {} declares no gates; at least one is required",
+                class.code()
+            ));
+        }
+        let mut gates = Vec::with_capacity(entry.gates.len());
         let mut platform_seen = false;
-        for (name, spec) in ordered {
-            if spec.command.trim().is_empty() {
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for spec in entry.gates {
+            if !valid_gate_name(&spec.name) {
                 return Err(format!(
-                    "class {} gate {name:?} has an empty command",
+                    "class {} has invalid gate name {:?} (expected lowercase/hyphen, first letter a-z)",
+                    class.code(),
+                    spec.name
+                ));
+            }
+            if !names.insert(spec.name.clone()) {
+                return Err(format!(
+                    "class {} declares gate {:?} more than once",
+                    class.code(),
+                    spec.name
+                ));
+            }
+            if spec.name == INSTALL_GATE && !gates.is_empty() {
+                return Err(format!(
+                    "class {} must declare the {INSTALL_GATE:?} gate first",
                     class.code()
                 ));
             }
+            if spec.command.trim().is_empty() {
+                return Err(format!(
+                    "class {} gate {:?} has an empty command",
+                    class.code(),
+                    spec.name
+                ));
+            }
             let applicability = Applicability::from_token(&spec.applicability)
-                .map_err(|e| format!("class {} gate {name:?}: {e}", class.code()))?;
+                .map_err(|e| format!("class {} gate {:?}: {e}", class.code(), spec.name))?;
             if applicability == Applicability::Github {
                 platform_seen = true;
             }
             gates.push(Gate {
-                name: name.to_string(),
+                name: spec.name,
                 command: spec.command,
                 applicability,
             });

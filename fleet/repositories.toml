@@ -1,31 +1,50 @@
 # Exhaustive canonical fleet: 28 repositories = 19 code + 1 native + 5 tap +
 # 2 apt + 1 fixture.
 # Baselines are immutable default-branch heads captured by Plan 005.
+#
+# Each member may declare `gates = [...]`, a subset of the gates its class
+# declares in classes.toml (canonical class order; duplicates and unknown names
+# are rejected). Absent means every class gate. A member lists a subset exactly
+# when scheduling the full class gate list would trip the fleet task-graph
+# linter today — the same leaf executed twice, an aggregate gate re-running a
+# directly scheduled task, a cache-destroying command on a CI-reachable task, or
+# an opaque aggregate composing mise tasks through its shell command. The
+# subset is the maximal findings-free prefix-consistent set in class order;
+# `velnor-actions-fleetlint --propose-gates` recomputes it, and each row
+# disappears as the member's mise task graph is restructured to schedule the
+# full class contract cleanly. The proof snapshots live in fleet/task-graphs/
+# (`mise run fleet-lint`).
 
 [[repository]]
 slug = "jackin-project/jackin"
 class = "native"
 baseline_sha = "b234e078eeeb2d0798b8ac75530cc24e2ba2e620"
+gates = ["install", "build", "lint", "format"]
 [[repository]]
 slug = "jackin-project/jackin-the-architect"
 class = "code"
 baseline_sha = "54adb4cbef6a613f0978b3bb5390ddff17afdbbe"
+gates = ["install", "test"]
 [[repository]]
 slug = "jackin-project/jackin-role-action"
 class = "code"
 baseline_sha = "041f17a6d32f8fd2a8ef03c2a63be58346993136"
+gates = ["install", "test"]
 [[repository]]
 slug = "jackin-project/jackin-agent-smith"
 class = "code"
 baseline_sha = "9deeba864d9c620f20900fd4aa4cc606b1511eab"
+gates = ["install", "test"]
 [[repository]]
 slug = "jackin-project/jackin-sentinel"
 class = "code"
 baseline_sha = "6b37441224187112747893a50fba88823175234d"
+gates = ["install", "test"]
 [[repository]]
 slug = "jackin-project/jackin-dev"
 class = "code"
 baseline_sha = "b841a0c9e73d142b5a2283f704f54f36d7a986f8"
+gates = ["install", "test"]
 [[repository]]
 slug = "tailrocks/parallax"
 class = "code"
@@ -38,6 +57,7 @@ baseline_sha = "7463cf43091ff6db955afdc3c79e61c37c2cf163"
 slug = "tailrocks/velnor"
 class = "code"
 baseline_sha = "d421a836c826cea829077f4f7df4942942f0bee6"
+gates = ["install", "test", "lint", "format"]
 [[repository]]
 slug = "tailrocks/holla"
 class = "code"
@@ -78,6 +98,7 @@ baseline_sha = "eba00cc78f31cd13451433353621a705580a2301"
 slug = "ChainArgos/jackin-agent-brown"
 class = "code"
 baseline_sha = "395611503aeeee83fe318f12b97d7a17a5cda8aa"
+gates = ["install", "test"]
 [[repository]]
 slug = "ChainArgos/blockchain-nodes"
 class = "code"
@@ -87,22 +108,27 @@ baseline_sha = "21c2031d9fd82756a2da3e3c76aa8f3ad6eb219c"
 slug = "jackin-project/homebrew-tap"
 class = "tap"
 baseline_sha = "f6268720aa777fe368e22caa1966fa92cabcf61b"
+gates = ["install", "build", "test", "lint"]
 [[repository]]
 slug = "tailrocks/homebrew-tablerock"
 class = "tap"
 baseline_sha = "3b857631bdeefbec3fbdd6c1984326dd5647679b"
+gates = ["install", "build", "test", "lint"]
 [[repository]]
 slug = "tailrocks/homebrew-holla"
 class = "tap"
 baseline_sha = "03e4686da678107b91ca25e04f33987906ae27e3"
+gates = ["install", "build", "test", "lint"]
 [[repository]]
 slug = "tailrocks/homebrew-parallax"
 class = "tap"
 baseline_sha = "3a5b3c372d45b994c1531001e3fde820788c4c30"
+gates = ["install", "build", "test", "lint"]
 [[repository]]
 slug = "tailrocks/homebrew-ruxel"
 class = "tap"
 baseline_sha = "5dadefbe09cbe3becfb49e9308e58deef56a2f1d"
+gates = ["install", "build", "lint"]
 
 [[repository]]
 slug = "tailrocks/velnor-apt"
@@ -112,6 +138,7 @@ baseline_sha = "9f6f2aa49ce70342bf54a1f9080f33c22dd22f27"
 slug = "tailrocks/holla-apt"
 class = "apt"
 baseline_sha = "f20fec54ceffd92cc478893a1b0de35bf1382300"
+gates = ["install", "build", "test", "lint"]
 
 [[repository]]
 slug = "tailrocks/velnor-actions-fixture"

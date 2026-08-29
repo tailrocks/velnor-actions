@@ -1,24 +1,23 @@
 [package]
-name = "velnor-actions-generator"
+name = "velnor-actions-fleetlint"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.97.1"
-description = "Headless skeleton for the canonical Velnor Actions fleet generator."
+description = "Fleet mise task-graph linter: proves each member's scheduled gates execute no duplicate leaf work."
 license = "Apache-2.0"
 publish = false
 
 [lib]
-name = "velnor_actions_generator"
+name = "velnor_actions_fleetlint"
 path = "src/lib.rs"
 
 [[bin]]
-name = "velnor-actions-generator"
+name = "velnor-actions-fleetlint"
 path = "src/main.rs"
 
 [dependencies]
-hex = "0.4.3"
+regex = "1.12.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.148"
-sha2 = "0.11.0"
 toml = { version = "0.9.8", default-features = false, features = ["parse", "serde"] }
-yaml-rust2 = "0.11.0"
+velnor-actions-generator = { path = "../velnor-actions-generator" }

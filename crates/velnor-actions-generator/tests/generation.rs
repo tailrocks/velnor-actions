@@ -78,7 +78,7 @@ fn repository_inventory_bytes_are_exactly_bound() {
     let bytes = std::fs::read(common::repo_root().join("fleet").join("repositories.toml")).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(bytes)),
-        "a3bde20f6fa1a2e74d3ace94f4a39055c5f78a721d57a0ef0ed7a628bbb30655"
+        "6044bc6023803feeb90ce6440b0005294f44586b408a917990beaa11e6766a6d"
     );
 }
 
@@ -197,6 +197,191 @@ fn platform_metadata_is_required_and_yaml_safe() {
 }
 
 #[test]
+fn class_gate_schema_is_validated() {
+    let install_block = "[[code.gates]]\nname = \"install\"\ncommand = \"mise install --locked\"\napplicability = \"both\"\n\n[native]";
+    for (tag, body, expected) in [
+        (
+            "duplicate-gate-name",
+            canonical_classes_toml().replacen(
+                "name = \"lint\"\ncommand = \"mise run lint\"",
+                "name = \"install\"\ncommand = \"mise run lint\"",
+                1,
+            ),
+            "declares gate \"install\" more than once",
+        ),
+        (
+            "empty-command",
+            canonical_classes_toml().replacen(
+                "name = \"build\"\ncommand = \"mise run build\"",
+                "name = \"build\"\ncommand = \"   \"",
+                1,
+            ),
+            "gate \"build\" has an empty command",
+        ),
+        (
+            "install-not-first",
+            // Move the code class's install gate from first to last position.
+            canonical_classes_toml()
+                .replacen(
+                    "[[code.gates]]\nname = \"install\"\ncommand = \"mise install --locked\"\napplicability = \"both\"\n\n",
+                    "",
+                    1,
+                )
+                .replacen("[native]", install_block, 1),
+            "must declare the \"install\" gate first",
+        ),
+        (
+            "invalid-gate-name",
+            canonical_classes_toml().replacen("name = \"format\"", "name = \"Format\"", 1),
+            "invalid gate name",
+        ),
+        (
+            "no-gates",
+            format!(
+                "[code]\nplatform_only = false\n\n{}",
+                &canonical_classes_toml()[canonical_classes_toml().find("[native]").unwrap()..]
+            ),
+            "class code declares no gates",
+        ),
+    ] {
+        let dir = common::bound_fixture(DUMMY_SHA);
+        let path = dir.join("fleet").join("classes.toml");
+        std::fs::write(&path, body).unwrap();
+        let err = FleetManifest::load(&dir).unwrap_err();
+        assert!(err.contains(expected), "{tag}: got {err}");
+    }
+}
+
+fn canonical_classes_toml() -> String {
+    std::fs::read_to_string(common::repo_root().join("fleet").join("classes.toml")).unwrap()
+}
+
+#[test]
+fn member_gate_subsets_are_validated_and_canonicalized() {
+    // Canonical rows: absent row schedules the full class contract, a listed
+    // row schedules exactly that subset in class declaration order.
+    let manifest = load();
+    let full_code = ["install", "build", "test", "lint", "format"];
+    let parallax = manifest
+        .repositories()
+        .iter()
+        .find(|r| r.slug == "tailrocks/parallax")
+        .unwrap();
+    assert_eq!(parallax.gates, full_code);
+    let velnor = manifest
+        .repositories()
+        .iter()
+        .find(|r| r.slug == "tailrocks/velnor")
+        .unwrap();
+    assert_eq!(velnor.gates, ["install", "test", "lint", "format"]);
+
+    for (tag, from, to, expected) in [
+        (
+            "unknown-gate",
+            "gates = [\"install\", \"test\"]",
+            "gates = [\"install\", \"deploy\"]",
+            "which class code does not declare",
+        ),
+        (
+            "duplicate-gate",
+            "gates = [\"install\", \"test\"]",
+            "gates = [\"install\", \"install\"]",
+            "schedules gate \"install\" more than once",
+        ),
+    ] {
+        let body = canonical_repositories_toml();
+        assert!(
+            body.contains(from),
+            "canonical row contains mutation target"
+        );
+        let dir = common::temp_dir(&format!("gates-{tag}"));
+        write_repos(&dir, &body.replacen(from, to, 1));
+        let err = FleetManifest::load(&dir).unwrap_err();
+        assert!(err.contains(expected), "{tag}: got {err}");
+    }
+
+    // Out-of-order declarations resolve back to class declaration order.
+    let body = canonical_repositories_toml().replacen(
+        "gates = [\"install\", \"test\"]",
+        "gates = [\"test\", \"install\"]",
+        1,
+    );
+    let dir = common::temp_dir("gates-order");
+    write_repos(&dir, &body);
+    let manifest = FleetManifest::load(&dir).unwrap();
+    let architect = manifest
+        .repositories()
+        .iter()
+        .find(|r| r.slug == "jackin-project/jackin-the-architect")
+        .unwrap();
+    assert_eq!(architect.gates, ["install", "test"]);
+}
+
+#[test]
+fn task_graph_snapshots_are_audited() {
+    // Missing snapshot, live findings, a gate-list drift, and a stray snapshot
+    // must each fail the audit; --skip-fleetlint must pass regardless.
+    let dir = common::bound_fixture(DUMMY_SHA);
+    std::fs::remove_file(
+        dir.join("fleet")
+            .join("task-graphs")
+            .join("tailrocks-parallax.json"),
+    )
+    .unwrap();
+    let err = audit::audit(&dir).unwrap_err();
+    assert!(
+        err.contains("is missing for fleet member tailrocks/parallax"),
+        "{err}"
+    );
+
+    let dir = common::bound_fixture(DUMMY_SHA);
+    let path = dir
+        .join("fleet")
+        .join("task-graphs")
+        .join("tailrocks-parallax.json");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    snapshot["findings"] = serde_json::json!([
+        {"kind": "duplicate-leaf", "message": "leaf executes twice"}
+    ]);
+    std::fs::write(&path, serde_json::to_string_pretty(&snapshot).unwrap()).unwrap();
+    let err = audit::audit(&dir).unwrap_err();
+    assert!(err.contains("task-graph findings are present"), "{err}");
+
+    let dir = common::bound_fixture(DUMMY_SHA);
+    let path = dir
+        .join("fleet")
+        .join("task-graphs")
+        .join("tailrocks-parallax.json");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    snapshot["scheduled_gates"] = serde_json::json!(["install"]);
+    std::fs::write(&path, serde_json::to_string_pretty(&snapshot).unwrap()).unwrap();
+    let err = audit::audit(&dir).unwrap_err();
+    assert!(err.contains("snapshot schedules"), "{err}");
+
+    let dir = common::bound_fixture(DUMMY_SHA);
+    std::fs::write(
+        dir.join("fleet")
+            .join("task-graphs")
+            .join("stray-outfit.json"),
+        "{}\n",
+    )
+    .unwrap();
+    let err = audit::audit(&dir).unwrap_err();
+    assert!(err.contains("snapshots for unknown members"), "{err}");
+
+    let dir = common::bound_fixture(DUMMY_SHA);
+    std::fs::remove_file(
+        dir.join("fleet")
+            .join("task-graphs")
+            .join("tailrocks-parallax.json"),
+    )
+    .unwrap();
+    audit::audit_with_options(&dir, true).expect("--skip-fleetlint skips snapshot checks");
+}
+
+#[test]
 fn templates_are_deterministic() {
     for class in ALL_CLASSES {
         let a = render::consumer_template(class);
@@ -226,7 +411,10 @@ fn exactly_five_templates_render() {
 #[test]
 fn audit_passes_on_repo() {
     let line = audit::audit(&common::repo_root()).expect("audit passes");
-    assert_eq!(line, "fleet valid: 28 repositories, 5 classes, 5 templates");
+    assert_eq!(
+        line,
+        "fleet valid: 28 repositories, 5 classes, 25 class gates, 113 scheduled gates, 5 templates"
+    );
 }
 
 #[test]
@@ -460,7 +648,10 @@ fn updater_executes_explicit_current_then_old_signer_alternatives() {
 fn bound_fixture_audit_passes() {
     let dir = common::bound_fixture(DUMMY_SHA);
     let line = audit::audit(&dir).expect("bound audit passes");
-    assert_eq!(line, "fleet valid: 28 repositories, 5 classes, 5 templates");
+    assert_eq!(
+        line,
+        "fleet valid: 28 repositories, 5 classes, 25 class gates, 113 scheduled gates, 5 templates"
+    );
 }
 
 #[test]
@@ -653,7 +844,7 @@ fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
         ),
         (
             ".github/workflows/ci-code.yml",
-            "ca4fac77d6f16aec779c80d112c77f87dace482a60a771aed374c6ed11bd9b69",
+            "537c97db0deae2299357eb8380908d2da140a15708152f86de8d20c93f22182a",
         ),
         (
             ".github/workflows/ci-native.yml",

@@ -1,0 +1,105 @@
+{
+  "slug": "tailrocks/holla-apt",
+  "class": "apt",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "true",
+      "dir": ".",
+      "leaf_identity": "true|dir=.|env="
+    },
+    {
+      "name": "check",
+      "depends": [
+        "actionlint",
+        "shellcheck",
+        "package-update-test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "cmd": "true",
+      "dir": ".",
+      "leaf_identity": "true|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "depends": [
+        "actionlint",
+        "shellcheck"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "package-update",
+      "cmd": "./scripts/package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/package-update.sh|dir=.|env="
+    },
+    {
+      "name": "package-update-test",
+      "cmd": "./scripts/test-package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/test-package-update.sh|dir=.|env="
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "shellcheck scripts/*.sh",
+      "dir": ".",
+      "leaf_identity": "shellcheck scripts/*.sh|dir=.|env="
+    },
+    {
+      "name": "test",
+      "depends": [
+        "package-update-test"
+      ],
+      "dir": "."
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "./scripts/test-package-update.sh|dir=.|env=",
+      "tasks": [
+        "package-update-test"
+      ]
+    },
+    {
+      "identity": "actionlint|dir=.|env=",
+      "tasks": [
+        "actionlint"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "shellcheck scripts/*.sh|dir=.|env=",
+      "tasks": [
+        "shellcheck"
+      ]
+    },
+    {
+      "identity": "true|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    }
+  ],
+  "findings": []
+}

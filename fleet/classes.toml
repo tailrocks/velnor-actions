@@ -1,7 +1,9 @@
 # Class contracts — the shared model each repository class executes. This file is
-# DATA. Every class declares the same five ordered gates (install, build, test,
-# lint, format), each with an explicit non-empty command and an explicit
-# applicability, plus whether the class carries a genuinely platform-only gate.
+# DATA. Every class declares an ordered gate list (`[[<class>.gates]]`), each with
+# a unique name, an explicit non-empty command, and an explicit applicability,
+# plus whether the class carries a genuinely platform-only gate. The generator
+# never hardcodes gate names or counts: a class may declare any number of gates
+# in any order, as long as the `install` gate — when present — comes first.
 #
 # Applicability is explicit for every gate; there is no implicit default:
 #   both   — lane-portable: runs on the Velnor lane and the GitHub-hosted lane.
@@ -9,19 +11,38 @@
 #            validation). It is NOT run on the Velnor lane and is never
 #            misreported there as an equivalent Velnor check.
 #
-# The code class's standard repository-owned project command is `mise run ci`
-# (see CODE_STANDARD_COMMAND in src/model.rs). Repository-specific work composes
-# beneath that checked-in task; the shared workflow never branches on repository
-# slug. The five gates below decompose that contract into independently
-# attributable required checks with identical names on both lanes.
+# Members may schedule a subset of their class's gates via `gates = [...]` in
+# fleet/repositories.toml (default: every class gate). The fleet task-graph
+# linter (crates/velnor-actions-fleetlint) proves each member's scheduled gates
+# expand to a mise task DAG with no duplicate leaf execution.
 
 [code]
 platform_only = false
-install = { command = "mise install --locked", applicability = "both" }
-build = { command = "mise run ci", applicability = "both" }
-test = { command = "mise run test", applicability = "both" }
-lint = { command = "mise run lint", applicability = "both" }
-format = { command = "mise run fmt", applicability = "both" }
+
+[[code.gates]]
+name = "install"
+command = "mise install --locked"
+applicability = "both"
+
+[[code.gates]]
+name = "build"
+command = "mise run build"
+applicability = "both"
+
+[[code.gates]]
+name = "test"
+command = "mise run test"
+applicability = "both"
+
+[[code.gates]]
+name = "lint"
+command = "mise run lint"
+applicability = "both"
+
+[[code.gates]]
+name = "format"
+command = "mise run fmt"
+applicability = "both"
 
 [native]
 # Native code keeps the portable code-class contract and adds one required
@@ -31,11 +52,31 @@ platform_only = true
 platform_runner = "macos-26"
 platform_name = "native-usage-menu-bar"
 platform_timeout_minutes = 60
-install = { command = "mise install --locked", applicability = "both" }
-build = { command = "mise run ci", applicability = "both" }
-test = { command = "mise run desktop-ci", applicability = "github" }
-lint = { command = "mise run lint", applicability = "both" }
-format = { command = "mise run fmt", applicability = "both" }
+
+[[native.gates]]
+name = "install"
+command = "mise install --locked"
+applicability = "both"
+
+[[native.gates]]
+name = "build"
+command = "mise run ci"
+applicability = "both"
+
+[[native.gates]]
+name = "test"
+command = "mise run desktop-ci"
+applicability = "github"
+
+[[native.gates]]
+name = "lint"
+command = "mise run lint"
+applicability = "both"
+
+[[native.gates]]
+name = "format"
+command = "mise run fmt"
+applicability = "both"
 
 [tap]
 # Homebrew taps carry a genuinely platform-only gate: macOS cask/bottle
@@ -44,24 +85,84 @@ format = { command = "mise run fmt", applicability = "both" }
 platform_only = true
 platform_runner = "macos-latest"
 platform_name = "GitHub platform lane"
-install = { command = "mise install --locked", applicability = "both" }
-build = { command = "mise run build", applicability = "both" }
-test = { command = "mise run test", applicability = "github" }
-lint = { command = "mise run lint", applicability = "both" }
-format = { command = "mise run fmt", applicability = "both" }
+
+[[tap.gates]]
+name = "install"
+command = "mise install --locked"
+applicability = "both"
+
+[[tap.gates]]
+name = "build"
+command = "mise run build"
+applicability = "both"
+
+[[tap.gates]]
+name = "test"
+command = "mise run test"
+applicability = "github"
+
+[[tap.gates]]
+name = "lint"
+command = "mise run lint"
+applicability = "both"
+
+[[tap.gates]]
+name = "format"
+command = "mise run fmt"
+applicability = "both"
 
 [apt]
 platform_only = false
-install = { command = "mise install --locked", applicability = "both" }
-build = { command = "mise run build", applicability = "both" }
-test = { command = "mise run test", applicability = "both" }
-lint = { command = "mise run lint", applicability = "both" }
-format = { command = "mise run fmt", applicability = "both" }
+
+[[apt.gates]]
+name = "install"
+command = "mise install --locked"
+applicability = "both"
+
+[[apt.gates]]
+name = "build"
+command = "mise run build"
+applicability = "both"
+
+[[apt.gates]]
+name = "test"
+command = "mise run test"
+applicability = "both"
+
+[[apt.gates]]
+name = "lint"
+command = "mise run lint"
+applicability = "both"
+
+[[apt.gates]]
+name = "format"
+command = "mise run fmt"
+applicability = "both"
 
 [fixture]
 platform_only = false
-install = { command = "mise install --locked", applicability = "both" }
-build = { command = "mise run build", applicability = "both" }
-test = { command = "mise run test", applicability = "both" }
-lint = { command = "mise run lint", applicability = "both" }
-format = { command = "mise run fmt", applicability = "both" }
+
+[[fixture.gates]]
+name = "install"
+command = "mise install --locked"
+applicability = "both"
+
+[[fixture.gates]]
+name = "build"
+command = "mise run build"
+applicability = "both"
+
+[[fixture.gates]]
+name = "test"
+command = "mise run test"
+applicability = "both"
+
+[[fixture.gates]]
+name = "lint"
+command = "mise run lint"
+applicability = "both"
+
+[[fixture.gates]]
+name = "format"
+command = "mise run fmt"
+applicability = "both"

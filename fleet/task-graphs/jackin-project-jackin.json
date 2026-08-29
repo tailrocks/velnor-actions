@@ -1,0 +1,262 @@
+{
+  "slug": "jackin-project/jackin",
+  "class": "native",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "build",
+      "cmd": "git fetch --no-tags origin main:refs/remotes/origin/main && cargo xtask ci --only policy --only docs --only snapshots",
+      "dir": ".",
+      "leaf_identity": "git fetch --no-tags origin main:refs/remotes/origin/main && cargo xtask ci --only policy --only docs --only snapshots|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "build"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "construct-assert-version-unpublished",
+      "cmd": "cargo xtask construct assert-version-unpublished",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct assert-version-unpublished|dir=.|env="
+    },
+    {
+      "name": "construct-build-local",
+      "cmd": "cargo xtask construct build-local",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct build-local|dir=.|env="
+    },
+    {
+      "name": "construct-build-platform",
+      "cmd": "cargo xtask construct build-platform \"$usage_platform\"",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct build-platform \"$usage_platform\"|dir=.|env="
+    },
+    {
+      "name": "construct-doctor-buildx",
+      "cmd": "cargo xtask construct doctor-buildx",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct doctor-buildx|dir=.|env="
+    },
+    {
+      "name": "construct-init-buildx",
+      "cmd": "cargo xtask construct init-buildx",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct init-buildx|dir=.|env="
+    },
+    {
+      "name": "construct-inspect",
+      "cmd": "cargo xtask construct inspect",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct inspect|dir=.|env="
+    },
+    {
+      "name": "construct-publish-manifest",
+      "cmd": "cargo xtask construct publish-manifest",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct publish-manifest|dir=.|env="
+    },
+    {
+      "name": "construct-push-platform",
+      "cmd": "cargo xtask construct push-platform \"$usage_platform\"",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct push-platform \"$usage_platform\"|dir=.|env="
+    },
+    {
+      "name": "construct-reset-buildx",
+      "cmd": "cargo xtask construct reset-buildx",
+      "dir": ".",
+      "leaf_identity": "cargo xtask construct reset-buildx|dir=.|env="
+    },
+    {
+      "name": "desktop",
+      "cmd": "set -euo pipefail\ncargo xtask desktop build --version \"$usage_version\" --build \"$usage_build\"\ncargo xtask desktop verify native/dist/JackinDesktop.app\ncargo xtask desktop run native/dist/JackinDesktop.app\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail cargo xtask desktop build --version \"$usage_version\" --build \"$usage_build\" cargo xtask desktop verify native/dist/JackinDesktop.app cargo xtask desktop run native/dist/JackinDesktop.app|dir=.|env="
+    },
+    {
+      "name": "desktop-bindings",
+      "cmd": "cargo xtask desktop bindings",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop bindings|dir=.|env="
+    },
+    {
+      "name": "desktop-bindings-check",
+      "cmd": "cargo xtask desktop bindings-check",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop bindings-check|dir=.|env="
+    },
+    {
+      "name": "desktop-bootstrap-secrets",
+      "cmd": "cargo xtask desktop bootstrap-secrets",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop bootstrap-secrets|dir=.|env="
+    },
+    {
+      "name": "desktop-build",
+      "cmd": "cargo xtask desktop build --version \"$usage_version\" --build \"$usage_build\"",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop build --version \"$usage_version\" --build \"$usage_build\"|dir=.|env="
+    },
+    {
+      "name": "desktop-ci",
+      "cmd": "set -euo pipefail\nmise run desktop-bindings-check\nmise run desktop-generate\nmise run desktop-format-check\nmise run desktop-lint\nmise run desktop-test\nmise run desktop-build\ncargo xtask desktop test-swift\nmise run desktop-verify\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail mise run desktop-bindings-check mise run desktop-generate mise run desktop-format-check mise run desktop-lint mise run desktop-test mise run desktop-build cargo xtask desktop test-swift mise run desktop-verify|dir=.|env="
+    },
+    {
+      "name": "desktop-deadcode",
+      "cmd": "cd native && periphery scan --project JackinDesktop.xcodeproj --schemes JackinDesktop --retain-public --retain-objc-accessible --retain-assign-only-properties --report-exclude '**/JackinUsageBindings/**' --strict --quiet",
+      "dir": ".",
+      "leaf_identity": "cd native && periphery scan --project JackinDesktop.xcodeproj --schemes JackinDesktop --retain-public --retain-objc-accessible --retain-assign-only-properties --report-exclude '**/JackinUsageBindings/**' --strict --quiet|dir=.|env="
+    },
+    {
+      "name": "desktop-format",
+      "cmd": "cd native && find Sources Tests UITests Tools Scripts -name '*.swift' ! -path '*/JackinUsageBindings/*' -print0 | xargs -0 xcrun swift-format format --configuration .swift-format --in-place --parallel",
+      "dir": ".",
+      "leaf_identity": "cd native && find Sources Tests UITests Tools Scripts -name '*.swift' ! -path '*/JackinUsageBindings/*' -print0 | xargs -0 xcrun swift-format format --configuration .swift-format --in-place --parallel|dir=.|env="
+    },
+    {
+      "name": "desktop-format-check",
+      "cmd": "cd native && find Sources Tests UITests Tools Scripts -name '*.swift' ! -path '*/JackinUsageBindings/*' -print0 | xargs -0 xcrun swift-format lint --configuration .swift-format --strict --parallel",
+      "dir": ".",
+      "leaf_identity": "cd native && find Sources Tests UITests Tools Scripts -name '*.swift' ! -path '*/JackinUsageBindings/*' -print0 | xargs -0 xcrun swift-format lint --configuration .swift-format --strict --parallel|dir=.|env="
+    },
+    {
+      "name": "desktop-generate",
+      "cmd": "xcodegen generate --spec native/project.yml",
+      "dir": ".",
+      "leaf_identity": "xcodegen generate --spec native/project.yml|dir=.|env="
+    },
+    {
+      "name": "desktop-lint",
+      "cmd": "cd native && swiftlint lint --strict",
+      "dir": ".",
+      "leaf_identity": "cd native && swiftlint lint --strict|dir=.|env="
+    },
+    {
+      "name": "desktop-merge",
+      "cmd": "set -euo pipefail\nmise run desktop-ci\nmise run desktop-test-ui\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail mise run desktop-ci mise run desktop-test-ui|dir=.|env="
+    },
+    {
+      "name": "desktop-prototype",
+      "cmd": "set -euo pipefail\nmise run desktop-prototype-build\nargs=(\"$usage_scenario\" \"$usage_window\" \"$usage_appearance\")\nif [ -n \"${usage_reduce:-}\" ]; then args+=(\"$usage_reduce\"); fi\nif [ -n \"${usage_backdrop:-}\" ]; then args+=(\"$usage_backdrop\"); fi\nif [ \"${usage_increase_contrast:-false}\" = \"true\" ]; then args+=(--increase-contrast); fi\nmise run desktop-prototype-run -- \"${args[@]}\"\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail mise run desktop-prototype-build args=(\"$usage_scenario\" \"$usage_window\" \"$usage_appearance\") if [ -n \"${usage_reduce:-}\" ]; then args+=(\"$usage_reduce\"); fi if [ -n \"${usage_backdrop:-}\" ]; then args+=(\"$usage_backdrop\"); fi if [ \"${usage_increase_contrast:-false}\" = \"true\" ]; then args+=(--increase-contrast); fi mise run desktop-prototype-run -- \"${args[@]}\"|dir=.|env="
+    },
+    {
+      "name": "desktop-prototype-build",
+      "cmd": "set -euo pipefail\npackage=\"native/Design/Prototypes/UnifiedAgentUsage\"\nswift build --package-path \"$package\"\napp=\"$package/.build/UnifiedAgentUsageProto.app\"\nmkdir -p \"$app/Contents/MacOS\" \"$app/Contents/Resources\"\ncp \"$package/AppInfo.plist\" \"$app/Contents/Info.plist\"\ncp \"$package/.build/debug/UnifiedAgentUsageProto\" \"$app/Contents/MacOS/UnifiedAgentUsageProto\"\nditto \"$package/.build/debug/UnifiedAgentUsageProto_UnifiedAgentUsageProto.bundle\" \\\n  \"$app/Contents/Resources/UnifiedAgentUsageProto_UnifiedAgentUsageProto.bundle\"\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail package=\"native/Design/Prototypes/UnifiedAgentUsage\" swift build --package-path \"$package\" app=\"$package/.build/UnifiedAgentUsageProto.app\" mkdir -p \"$app/Contents/MacOS\" \"$app/Contents/Resources\" cp \"$package/AppInfo.plist\" \"$app/Contents/Info.plist\" cp \"$package/.build/debug/UnifiedAgentUsageProto\" \"$app/Contents/MacOS/UnifiedAgentUsageProto\" ditto \"$package/.build/debug/UnifiedAgentUsageProto_UnifiedAgentUsageProto.bundle\" \\ \"$app/Contents/Resources/UnifiedAgentUsageProto_UnifiedAgentUsageProto.bundle\"|dir=.|env="
+    },
+    {
+      "name": "desktop-prototype-run",
+      "cmd": "set -euo pipefail\napp=\"native/Design/Prototypes/UnifiedAgentUsage/.build/UnifiedAgentUsageProto.app\"\nargs=(\n  --tr-scenario \"$usage_scenario\"\n  --tr-window \"$usage_window\"\n  --tr-appearance \"$usage_appearance\"\n)\nif [ -n \"${usage_reduce:-}\" ]; then args+=(--tr-reduce \"$usage_reduce\"); fi\nif [ -n \"${usage_backdrop:-}\" ]; then args+=(--tr-backdrop \"$usage_backdrop\"); fi\nif [ \"${usage_increase_contrast:-false}\" = \"true\" ]; then args+=(--tr-increase-contrast); fi\npkill -f \"$PWD/$app/Contents/MacOS/UnifiedAgentUsageProto\" 2>/dev/null || true\nlaunchctl remove com.jackin.prototype.unified-agent-usage 2>/dev/null || true\nopen -n \"$app\" --args \"${args[@]}\"\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail app=\"native/Design/Prototypes/UnifiedAgentUsage/.build/UnifiedAgentUsageProto.app\" args=( --tr-scenario \"$usage_scenario\" --tr-window \"$usage_window\" --tr-appearance \"$usage_appearance\" ) if [ -n \"${usage_reduce:-}\" ]; then args+=(--tr-reduce \"$usage_reduce\"); fi if [ -n \"${usage_backdrop:-}\" ]; then args+=(--tr-backdrop \"$usage_backdrop\"); fi if [ \"${usage_increase_contrast:-false}\" = \"true\" ]; then args+=(--tr-increase-contrast); fi pkill -f \"$PWD/$app/Contents/MacOS/UnifiedAgentUsageProto\" 2>/dev/null || true launchctl remove com.jackin.prototype.unified-agent-usage 2>/dev/null || true open -n \"$app\" --args \"${args[@]}\"|dir=.|env="
+    },
+    {
+      "name": "desktop-release-state",
+      "cmd": "cargo xtask desktop release-state \"$usage_version\" --repo \"$usage_repo\" --tap \"$usage_tap\"",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop release-state \"$usage_version\" --repo \"$usage_repo\" --tap \"$usage_tap\"|dir=.|env="
+    },
+    {
+      "name": "desktop-run",
+      "cmd": "if [ \"${usage_verify:-}\" = \"true\" ]; then\n  cargo xtask desktop run \"$usage_app\" --verify\nelse\n  cargo xtask desktop run \"$usage_app\"\nfi\n",
+      "dir": ".",
+      "leaf_identity": "if [ \"${usage_verify:-}\" = \"true\" ]; then cargo xtask desktop run \"$usage_app\" --verify else cargo xtask desktop run \"$usage_app\" fi|dir=.|env="
+    },
+    {
+      "name": "desktop-scheduled",
+      "cmd": "set -euo pipefail\nmise run desktop-merge\nmise run desktop-deadcode\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail mise run desktop-merge mise run desktop-deadcode|dir=.|env="
+    },
+    {
+      "name": "desktop-sign-notarize",
+      "cmd": "set -euo pipefail\nargs=(\"$usage_app\")\nif [ -n \"${usage_out_zip:-}\" ]; then args+=(\"$usage_out_zip\"); fi\nif [ -n \"${usage_version:-}\" ]; then args+=(--version \"$usage_version\"); fi\nif [ -n \"${usage_build:-}\" ]; then args+=(--build \"$usage_build\"); fi\ncargo xtask desktop sign-notarize \"${args[@]}\"\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail args=(\"$usage_app\") if [ -n \"${usage_out_zip:-}\" ]; then args+=(\"$usage_out_zip\"); fi if [ -n \"${usage_version:-}\" ]; then args+=(--version \"$usage_version\"); fi if [ -n \"${usage_build:-}\" ]; then args+=(--build \"$usage_build\"); fi cargo xtask desktop sign-notarize \"${args[@]}\"|dir=.|env="
+    },
+    {
+      "name": "desktop-test",
+      "cmd": "cargo xtask desktop test",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop test|dir=.|env="
+    },
+    {
+      "name": "desktop-test-ui",
+      "cmd": "native/Scripts/run-ui-tests.sh",
+      "dir": ".",
+      "leaf_identity": "native/Scripts/run-ui-tests.sh|dir=.|env="
+    },
+    {
+      "name": "desktop-verify",
+      "cmd": "set -euo pipefail\nargs=(\"$usage_app\")\nif [ -n \"${usage_version:-}\" ]; then args+=(--version \"$usage_version\"); fi\nif [ -n \"${usage_build:-}\" ]; then args+=(--build \"$usage_build\"); fi\nif [ \"${usage_release:-false}\" = \"true\" ]; then args+=(--release); fi\ncargo xtask desktop verify \"${args[@]}\"\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail args=(\"$usage_app\") if [ -n \"${usage_version:-}\" ]; then args+=(--version \"$usage_version\"); fi if [ -n \"${usage_build:-}\" ]; then args+=(--build \"$usage_build\"); fi if [ \"${usage_release:-false}\" = \"true\" ]; then args+=(--release); fi cargo xtask desktop verify \"${args[@]}\"|dir=.|env="
+    },
+    {
+      "name": "desktop-xcframework",
+      "cmd": "cargo xtask desktop xcframework",
+      "dir": ".",
+      "leaf_identity": "cargo xtask desktop xcframework|dir=.|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --check|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo xtask ci --only lint --fast",
+      "dir": ".",
+      "leaf_identity": "cargo xtask ci --only lint --fast|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo xtask ci --only tests --fast",
+      "dir": ".",
+      "leaf_identity": "cargo xtask ci --only tests --fast|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo fmt --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo xtask ci --only lint --fast|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "git fetch --no-tags origin main:refs/remotes/origin/main && cargo xtask ci --only policy --only docs --only snapshots|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

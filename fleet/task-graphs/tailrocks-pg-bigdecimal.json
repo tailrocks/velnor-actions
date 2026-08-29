@@ -1,0 +1,87 @@
+{
+  "slug": "tailrocks/pg-bigdecimal",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "build",
+      "cmd": "cargo build --workspace --all-targets --all-features",
+      "dir": ".",
+      "leaf_identity": "cargo build --workspace --all-targets --all-features|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "install",
+        "build",
+        "test",
+        "lint",
+        "fmt"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all -- --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all -- --check|dir=.|env="
+    },
+    {
+      "name": "install",
+      "cmd": "mise install --locked",
+      "dir": ".",
+      "leaf_identity": "mise install --locked|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "cargo clippy --workspace --all-targets --all-features -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --workspace --all-features",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --workspace --all-features|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo build --workspace --all-targets --all-features|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "cargo clippy --workspace --all-targets --all-features -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all -- --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --workspace --all-features|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

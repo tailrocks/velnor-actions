@@ -1,0 +1,52 @@
+{
+  "slug": "jackin-project/jackin-sentinel",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "test"
+  ],
+  "tasks": [
+    {
+      "name": "ci",
+      "depends": [
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "depends": [
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "lint",
+      "depends": [
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "test",
+      "cmd": "prek run --all-files",
+      "dir": ".",
+      "leaf_identity": "prek run --all-files|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "prek run --all-files|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    }
+  ],
+  "findings": []
+}

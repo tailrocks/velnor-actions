@@ -1,0 +1,120 @@
+{
+  "slug": "tailrocks/velnor-apt",
+  "class": "apt",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "build",
+      "depends": [
+        "verify-release-test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "check",
+      "depends": [
+        "actionlint",
+        "shellcheck",
+        "verify-release-test",
+        "package-update-test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "cmd": "true",
+      "dir": ".",
+      "leaf_identity": "true|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "depends": [
+        "actionlint",
+        "shellcheck"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "package-update",
+      "cmd": "./scripts/package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/package-update.sh|dir=.|env="
+    },
+    {
+      "name": "package-update-test",
+      "cmd": "./scripts/test-package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/test-package-update.sh|dir=.|env="
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "shellcheck .github/scripts/*.sh",
+      "dir": ".",
+      "leaf_identity": "shellcheck .github/scripts/*.sh|dir=.|env="
+    },
+    {
+      "name": "test",
+      "depends": [
+        "package-update-test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "verify-release-test",
+      "cmd": ".github/scripts/test-verify-release.sh",
+      "dir": ".",
+      "leaf_identity": ".github/scripts/test-verify-release.sh|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "./scripts/test-package-update.sh|dir=.|env=",
+      "tasks": [
+        "package-update-test"
+      ]
+    },
+    {
+      "identity": ".github/scripts/test-verify-release.sh|dir=.|env=",
+      "tasks": [
+        "verify-release-test"
+      ]
+    },
+    {
+      "identity": "actionlint|dir=.|env=",
+      "tasks": [
+        "actionlint"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "shellcheck .github/scripts/*.sh|dir=.|env=",
+      "tasks": [
+        "shellcheck"
+      ]
+    },
+    {
+      "identity": "true|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    }
+  ],
+  "findings": []
+}

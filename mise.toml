@@ -68,6 +68,22 @@ description = "Fetch pinned remote actions and verify their recursive executable
 depends = ["_toolchain"]
 run = "cargo run --locked -p velnor-actions-generator -- verify-remote --root ."
 
+# Fleet task-graph snapshots: parse every member clone's mise task DAG, expand
+# the gates each member schedules (fleet/classes.toml + fleet/repositories.toml),
+# and write fleet/task-graphs/*.json. Run on demand — typically after a member's
+# mise refactor — with the clones directory in REPOS_DIR (default: the sibling
+# ../ checkout). Deliberately not part of `ci`: member clones are absent there,
+# and `generator-check` verifies the committed snapshots instead, printing a
+# visible warning (never a silent pass) when the clones or the fleetlint binary
+# cannot be reached.
+[tasks.fleet-lint]
+description = "Regenerate fleet task-graph snapshots from the member clones"
+depends = ["_toolchain"]
+run = [
+  "cargo build --locked -p velnor-actions-fleetlint",
+  "target/debug/velnor-actions-fleetlint --root . --repos-dir \"${REPOS_DIR:-..}\"",
+]
+
 [tasks.ci]
 description = "Run every repository gate"
 depends = ["fmt", "lint", "test", "actionlint", "deny", "generator-check", "remote-closure-check"]

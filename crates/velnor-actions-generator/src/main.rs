@@ -6,7 +6,8 @@
 //!   block SHA is bound, the five callable workflows).
 //! - `render-consumer --root PATH --repository OWNER/REPO` plus three
 //!   owner-local release SHA flags, `--calver VER --output DIR`.
-//! - `audit --root PATH` — full fleet audit; prints the exact fleet-valid line.
+//! - `audit --root PATH [--skip-fleetlint]` — full fleet audit; prints the exact
+//!   fleet-valid line. `--skip-fleetlint` skips the task-graph snapshot checks.
 //!
 //! Malformed arguments, a missing layout root, or any audit violation exit
 //! nonzero.
@@ -162,14 +163,16 @@ fn run_generate(mut args: impl Iterator<Item = String>) -> Result<String, String
 
 fn run_audit(mut args: impl Iterator<Item = String>) -> Result<String, String> {
     let mut root: Option<PathBuf> = None;
+    let mut skip_fleetlint = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = Some(PathBuf::from(require_value(&mut args, "--root")?)),
+            "--skip-fleetlint" => skip_fleetlint = true,
             other => return Err(format!("unexpected argument: {other}")),
         }
     }
     let root = root.ok_or("audit requires --root PATH")?;
-    audit::audit(&root)
+    audit::audit_with_options(&root, skip_fleetlint)
 }
 
 fn run_render_consumer(mut args: impl Iterator<Item = String>) -> Result<String, String> {

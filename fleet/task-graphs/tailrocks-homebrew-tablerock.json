@@ -1,0 +1,99 @@
+{
+  "slug": "tailrocks/homebrew-tablerock",
+  "class": "tap",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "set -e; for f in Formula/*.rb Casks/*.rb; do ruby -c \"$f\" || exit 1; done",
+      "dir": ".",
+      "leaf_identity": "set -e; for f in Formula/*.rb Casks/*.rb; do ruby -c \"$f\" || exit 1; done|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "build",
+        "test",
+        "lint"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "lint",
+      "depends": [
+        "actionlint",
+        "shellcheck"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "package-update",
+      "cmd": "./scripts/package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/package-update.sh|dir=.|env="
+    },
+    {
+      "name": "package-update-test",
+      "cmd": "./scripts/test-package-update.sh",
+      "dir": ".",
+      "leaf_identity": "./scripts/test-package-update.sh|dir=.|env="
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "shellcheck scripts/*.sh",
+      "dir": ".",
+      "leaf_identity": "shellcheck scripts/*.sh|dir=.|env="
+    },
+    {
+      "name": "test",
+      "depends": [
+        "package-update-test"
+      ],
+      "dir": "."
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "./scripts/test-package-update.sh|dir=.|env=",
+      "tasks": [
+        "package-update-test"
+      ]
+    },
+    {
+      "identity": "actionlint|dir=.|env=",
+      "tasks": [
+        "actionlint"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "set -e; for f in Formula/*.rb Casks/*.rb; do ruby -c \"$f\" || exit 1; done|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "shellcheck scripts/*.sh|dir=.|env=",
+      "tasks": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "findings": []
+}

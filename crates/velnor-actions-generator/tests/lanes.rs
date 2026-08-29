@@ -96,14 +96,6 @@ fn native_has_explicit_named_macos_gate() {
 }
 
 #[test]
-fn code_standard_project_command_is_mise_run_ci() {
-    assert_eq!(
-        velnor_actions_generator::model::CODE_STANDARD_COMMAND,
-        "mise run ci"
-    );
-}
-
-#[test]
 fn code_class_is_lane_portable() {
     let m = FleetManifest::load(&common::repo_root()).unwrap();
     let code = m.class(RepositoryClass::Code);
@@ -142,14 +134,25 @@ fn both_lanes_are_independent_and_neither_substitutes() {
 #[test]
 fn same_gate_semantics_on_both_lanes_for_portable_gates() {
     let wf = callable(RepositoryClass::Code);
-    // The install/build/test/lint/format gate commands appear on both lanes.
-    for cmd in [
-        "mise install --locked",
-        "mise run ci",
-        "mise run test",
-        "mise run lint",
-        "mise run fmt",
-    ] {
+    // The declared code-class gate commands appear on both lanes.
+    let manifest = FleetManifest::load(&common::repo_root()).unwrap();
+    let commands: Vec<&str> = manifest
+        .class(RepositoryClass::Code)
+        .gates
+        .iter()
+        .map(|gate| gate.command.as_str())
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "mise install --locked",
+            "mise run build",
+            "mise run test",
+            "mise run lint",
+            "mise run fmt",
+        ]
+    );
+    for cmd in commands {
         assert_eq!(
             wf.matches(&format!("command: {cmd}")).count(),
             4,

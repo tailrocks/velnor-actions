@@ -1,0 +1,122 @@
+{
+  "slug": "tailrocks/velnor",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "check",
+      "depends": [
+        "fmt",
+        "actionlint",
+        "deny",
+        "fleet-generate",
+        "lint",
+        "test"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "actionlint",
+        "deny",
+        "fleet-generate"
+      ],
+      "cmd": "cargo check --workspace --all-targets --locked",
+      "dir": ".",
+      "leaf_identity": "cargo check --workspace --all-targets --locked|dir=.|env="
+    },
+    {
+      "name": "deny",
+      "cmd": "cargo deny check advisories",
+      "dir": ".",
+      "leaf_identity": "cargo deny check advisories|dir=.|env="
+    },
+    {
+      "name": "fleet-digests",
+      "cmd": "set -eu\nledger=fleet/release-refs.toml\nif [ ! -f \"$ledger\" ]; then\n  echo \"fleet digests: release-ref ledger '$ledger' not found\" >&2\n  exit 1\nfi\nfound=0\nplan_output=$(mktemp)\ndigest_output=$(mktemp)\ntrap 'rm -f \"$plan_output\" \"$digest_output\"' EXIT\nfor f in fleet/policies/*-desired-policy.json; do\n  [ -f \"$f\" ] || continue\n  found=1\n  cargo run -p velnor-tools --locked --quiet -- fleet-policy plan --policy \"$f\" --ledger \"$ledger\" >\"$plan_output\"\n  digest=$(sed -n 's/^digest: //p' \"$plan_output\")\n  printf '%s -> %s\n' \"$(basename \"$f\" -desired-policy.json)\" \"$digest\" >>\"$digest_output\"\ndone\nif [ \"$found\" -ne 1 ]; then\n  echo \"fleet digests: no *-desired-policy.json under fleet/policies/\" >&2\n  echo \"fleet digests: run rtk mise run fleet-generate to produce fleet/policies/<org>-desired-policy.json\" >&2\n  exit 1\nfi\ncat \"$digest_output\"\n",
+      "dir": ".",
+      "leaf_identity": "set -eu ledger=fleet/release-refs.toml if [ ! -f \"$ledger\" ]; then echo \"fleet digests: release-ref ledger '$ledger' not found\" >&2 exit 1 fi found=0 plan_output=$(mktemp) digest_output=$(mktemp) trap 'rm -f \"$plan_output\" \"$digest_output\"' EXIT for f in fleet/policies/*-desired-policy.json; do [ -f \"$f\" ] || continue found=1 cargo run -p velnor-tools --locked --quiet -- fleet-policy plan --policy \"$f\" --ledger \"$ledger\" >\"$plan_output\" digest=$(sed -n 's/^digest: //p' \"$plan_output\") printf '%s -> %s ' \"$(basename \"$f\" -desired-policy.json)\" \"$digest\" >>\"$digest_output\" done if [ \"$found\" -ne 1 ]; then echo \"fleet digests: no *-desired-policy.json under fleet/policies/\" >&2 echo \"fleet digests: run rtk mise run fleet-generate to produce fleet/policies/<org>-desired-policy.json\" >&2 exit 1 fi cat \"$digest_output\"|dir=.|env="
+    },
+    {
+      "name": "fleet-generate",
+      "cmd": "cargo run -p velnor-tools --locked --quiet -- fleet-policy generate --ledger fleet/release-refs.toml --out-dir fleet/policies",
+      "dir": ".",
+      "leaf_identity": "cargo run -p velnor-tools --locked --quiet -- fleet-policy generate --ledger fleet/release-refs.toml --out-dir fleet/policies|dir=.|env="
+    },
+    {
+      "name": "fleet-plan",
+      "cmd": "set -eu\nledger=fleet/release-refs.toml\nif [ ! -f \"$ledger\" ]; then\n  echo \"fleet plan: release-ref ledger '$ledger' not found\" >&2\n  exit 1\nfi\nfound=0\nfor f in fleet/policies/*-desired-policy.json; do\n  [ -f \"$f\" ] || continue\n  found=1\n  echo \"== $f ==\"\n  cargo run -p velnor-tools --locked --quiet -- fleet-policy plan --policy \"$f\" --ledger \"$ledger\"\ndone\nif [ \"$found\" -ne 1 ]; then\n  echo \"fleet plan: no *-desired-policy.json under fleet/policies/\" >&2\n  echo \"fleet plan: run rtk mise run fleet-generate to produce fleet/policies/<org>-desired-policy.json\" >&2\n  exit 1\nfi\n",
+      "dir": ".",
+      "leaf_identity": "set -eu ledger=fleet/release-refs.toml if [ ! -f \"$ledger\" ]; then echo \"fleet plan: release-ref ledger '$ledger' not found\" >&2 exit 1 fi found=0 for f in fleet/policies/*-desired-policy.json; do [ -f \"$f\" ] || continue found=1 echo \"== $f ==\" cargo run -p velnor-tools --locked --quiet -- fleet-policy plan --policy \"$f\" --ledger \"$ledger\" done if [ \"$found\" -ne 1 ]; then echo \"fleet plan: no *-desired-policy.json under fleet/policies/\" >&2 echo \"fleet plan: run rtk mise run fleet-generate to produce fleet/policies/<org>-desired-policy.json\" >&2 exit 1 fi|dir=.|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all --check|dir=.|env="
+    },
+    {
+      "name": "fmt-fix",
+      "cmd": "cargo fmt --all",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --workspace --locked --color=always",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --workspace --locked --color=always|dir=.|env="
+    },
+    {
+      "name": "test-focused",
+      "cmd": "cargo nextest run --locked --color=always",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --locked --color=always|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --workspace --locked --color=always|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

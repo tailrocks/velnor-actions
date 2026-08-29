@@ -1,0 +1,52 @@
+{
+  "slug": "jackin-project/jackin-role-action",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "test"
+  ],
+  "tasks": [
+    {
+      "name": "ci",
+      "depends": [
+        "lint"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "fmt",
+      "depends": [
+        "lint"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "lint",
+      "cmd": "reuse lint",
+      "dir": ".",
+      "leaf_identity": "reuse lint|dir=.|env="
+    },
+    {
+      "name": "test",
+      "depends": [
+        "lint"
+      ],
+      "dir": "."
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "reuse lint|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    }
+  ],
+  "findings": []
+}

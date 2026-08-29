@@ -599,7 +599,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           name: build
-          command: mise run ci
+          command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         env:
@@ -853,7 +853,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           name: build
-          command: mise run ci
+          command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         env:
@@ -2298,7 +2298,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           name: build
-          command: mise run ci
+          command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         env:
@@ -2917,7 +2917,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           name: build
-          command: mise run ci
+          command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
         env:

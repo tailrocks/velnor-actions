@@ -1,0 +1,153 @@
+{
+  "slug": "tailrocks/tailrocks-skills",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "audit-plan-state:check",
+      "cmd": "bun run scripts/check-audit-plan-state.ts --mode progress",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/check-audit-plan-state.ts --mode progress|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "bun install --frozen-lockfile && bun run types:check && bun run build",
+      "dir": "docs",
+      "leaf_identity": "bun install --frozen-lockfile && bun run types:check && bun run build|dir=docs|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "install",
+        "build",
+        "test",
+        "lint",
+        "fmt"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "docs",
+      "cmd": "bun run scripts/generate-references.ts --write && bun run scripts/generate-docs.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/generate-references.ts --write && bun run scripts/generate-docs.ts|dir=.|env="
+    },
+    {
+      "name": "docs:check",
+      "cmd": "bun run scripts/generate-references.ts --check && bun run scripts/generate-docs.ts --check",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/generate-references.ts --check && bun run scripts/generate-docs.ts --check|dir=.|env="
+    },
+    {
+      "name": "docs:dev",
+      "cmd": "bun install --frozen-lockfile && bun run dev",
+      "dir": "docs",
+      "leaf_identity": "bun install --frozen-lockfile && bun run dev|dir=docs|env="
+    },
+    {
+      "name": "docs:preview",
+      "cmd": "bun run preview",
+      "dir": "docs",
+      "leaf_identity": "bun run preview|dir=docs|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "oxfmt --check scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts",
+      "dir": ".",
+      "leaf_identity": "oxfmt --check scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts|dir=.|env="
+    },
+    {
+      "name": "fmt:write",
+      "cmd": "oxfmt scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts",
+      "dir": ".",
+      "leaf_identity": "oxfmt scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts|dir=.|env="
+    },
+    {
+      "name": "install",
+      "cmd": "mise install --locked",
+      "dir": ".",
+      "leaf_identity": "mise install --locked|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "bun run scripts/generate-references.ts --check && bun run scripts/validate-skills.ts && bun run scripts/generate-docs.ts --check && find skills scripts -type d -name evals -prune -o -path '*/templates/*.sh' -type f -print0 | xargs -0 -n1 sh -n",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/generate-references.ts --check && bun run scripts/validate-skills.ts && bun run scripts/generate-docs.ts --check && find skills scripts -type d -name evals -prune -o -path '*/templates/*.sh' -type f -print0 | xargs -0 -n1 sh -n|dir=.|env="
+    },
+    {
+      "name": "migration-check",
+      "cmd": "bun run scripts/check-audit-plan-state.ts --mode progress && bun run scripts/generate-references.ts --check && bun run scripts/validate-skills.ts && bun run scripts/generate-docs.ts --check && oxfmt --check scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts && bun run scripts/run-tests.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/check-audit-plan-state.ts --mode progress && bun run scripts/generate-references.ts --check && bun run scripts/validate-skills.ts && bun run scripts/generate-docs.ts --check && oxfmt --check scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts && bun run scripts/run-tests.ts|dir=.|env="
+    },
+    {
+      "name": "pr:checkout",
+      "cmd": "bun run scripts/checkout-pr.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/checkout-pr.ts|dir=.|env="
+    },
+    {
+      "name": "pr:merge",
+      "cmd": "bun run scripts/merge-pr.ts --skill-file $MISE_PROJECT_ROOT/skills/tailrocks-merge-pr/SKILL.md",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/merge-pr.ts --skill-file $MISE_PROJECT_ROOT/skills/tailrocks-merge-pr/SKILL.md|dir=.|env="
+    },
+    {
+      "name": "pr:merge-preflight",
+      "cmd": "bun run scripts/merge-preflight.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/merge-preflight.ts|dir=.|env="
+    },
+    {
+      "name": "pr:post-review",
+      "cmd": "bun run scripts/post-pr-review.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/post-pr-review.ts|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "bun run scripts/run-tests.ts",
+      "dir": ".",
+      "leaf_identity": "bun run scripts/run-tests.ts|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "bun install --frozen-lockfile && bun run types:check && bun run build|dir=docs|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "bun run scripts/generate-references.ts --check && bun run scripts/validate-skills.ts && bun run scripts/generate-docs.ts --check && find skills scripts -type d -name evals -prune -o -path '*/templates/*.sh' -type f -print0 | xargs -0 -n1 sh -n|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "bun run scripts/run-tests.ts|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "oxfmt --check scripts docs/src docs/scripts docs/vite.config.ts docs/source.config.ts|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    }
+  ],
+  "findings": []
+}

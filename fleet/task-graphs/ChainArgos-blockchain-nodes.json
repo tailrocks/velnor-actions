@@ -1,0 +1,135 @@
+{
+  "slug": "ChainArgos/blockchain-nodes",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "build",
+      "cmd": "cargo build --workspace --all-targets --locked",
+      "dir": ".",
+      "leaf_identity": "cargo build --workspace --all-targets --locked|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "install",
+        "build",
+        "test",
+        "lint",
+        "fmt"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "docker-build",
+      "cmd": "./docker-build.rs ${usage_package:?}",
+      "dir": ".",
+      "leaf_identity": "./docker-build.rs ${usage_package:?}|dir=.|env="
+    },
+    {
+      "name": "docker-build-all",
+      "cmd": "./docker-build.rs debian-blockchain-base\n./docker-build.rs debian-blockchain-build\n./docker-build.rs arbitrum\n./docker-build.rs avalanchego\n./docker-build.rs bnb-beacon-chain\n./docker-build.rs bitcoin-core\n./docker-build.rs bor\n./docker-build.rs bsc-geth\n./docker-build.rs cardano-node\n./docker-build.rs celo-geth\n./docker-build.rs dogecoin-core\n./docker-build.rs geth\n./docker-build.rs gnosis-geth\n./docker-build.rs heco-geth\n./docker-build.rs heimdall\n./docker-build.rs kcc-geth\n./docker-build.rs lighthouse\n./docker-build.rs litecoin-core\n./docker-build.rs octez\n./docker-build.rs omnicore\n./docker-build.rs op-geth\n./docker-build.rs op-node\n./docker-build.rs ronin-geth\n./docker-build.rs scroll-geth\n./docker-build.rs tron-java\n./docker-build.rs wbt-geth\n",
+      "dir": ".",
+      "leaf_identity": "./docker-build.rs debian-blockchain-base ./docker-build.rs debian-blockchain-build ./docker-build.rs arbitrum ./docker-build.rs avalanchego ./docker-build.rs bnb-beacon-chain ./docker-build.rs bitcoin-core ./docker-build.rs bor ./docker-build.rs bsc-geth ./docker-build.rs cardano-node ./docker-build.rs celo-geth ./docker-build.rs dogecoin-core ./docker-build.rs geth ./docker-build.rs gnosis-geth ./docker-build.rs heco-geth ./docker-build.rs heimdall ./docker-build.rs kcc-geth ./docker-build.rs lighthouse ./docker-build.rs litecoin-core ./docker-build.rs octez ./docker-build.rs omnicore ./docker-build.rs op-geth ./docker-build.rs op-node ./docker-build.rs ronin-geth ./docker-build.rs scroll-geth ./docker-build.rs tron-java ./docker-build.rs wbt-geth|dir=.|env="
+    },
+    {
+      "name": "docker-build-dry",
+      "cmd": "./docker-build.rs ${usage_package:?} --dry-run",
+      "dir": ".",
+      "leaf_identity": "./docker-build.rs ${usage_package:?} --dry-run|dir=.|env="
+    },
+    {
+      "name": "exists",
+      "cmd": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?}",
+      "dir": ".",
+      "leaf_identity": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?}|dir=.|env="
+    },
+    {
+      "name": "exists-platform",
+      "cmd": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?} --platform ${usage_platform:?}",
+      "dir": ".",
+      "leaf_identity": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?} --platform ${usage_platform:?}|dir=.|env="
+    },
+    {
+      "name": "exists-verbose",
+      "cmd": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?} --verbose",
+      "dir": ".",
+      "leaf_identity": "rust-script --pkg-path \"${RUST_SCRIPT_DOCKER_EXISTS_PKG_PATH:-$HOME/.cache/rust-script/docker-exists}\" ./docker-exists.rs ${usage_package:?} --verbose|dir=.|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all -- --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all -- --check|dir=.|env="
+    },
+    {
+      "name": "install",
+      "cmd": "mise install --locked",
+      "dir": ".",
+      "leaf_identity": "mise install --locked|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "restart",
+      "cmd": "./containerctl.rs restart ${usage_container:?} -f",
+      "dir": ".",
+      "leaf_identity": "./containerctl.rs restart ${usage_container:?} -f|dir=.|env="
+    },
+    {
+      "name": "stop",
+      "cmd": "./containerctl.rs stop ${usage_container:?}",
+      "dir": ".",
+      "leaf_identity": "./containerctl.rs stop ${usage_container:?}|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "cargo nextest run --workspace --all-targets --locked",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run --workspace --all-targets --locked|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "cargo build --workspace --all-targets --locked|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all -- --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "cargo nextest run --workspace --all-targets --locked|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

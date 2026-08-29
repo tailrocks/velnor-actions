@@ -1,0 +1,533 @@
+{
+  "slug": "ChainArgos/java-monorepo",
+  "class": "code",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "test",
+    "lint",
+    "format"
+  ],
+  "tasks": [
+    {
+      "name": "build",
+      "cmd": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail --no-run",
+      "dir": ".",
+      "leaf_identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail --no-run|dir=.|env="
+    },
+    {
+      "name": "build-docker-bitcoin-processor",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :bitcoin-processor-app:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :bitcoin-processor-app:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-blockchain-explorer",
+      "cmd": "docker build -f backend-rust/Dockerfile --target blockchain-explorer -t chainargos/blockchain-explorer .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target blockchain-explorer -t chainargos/blockchain-explorer .|dir=.|env="
+    },
+    {
+      "name": "build-docker-coingecko-price-scraper-job",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew :coingecko-price-scraper-job:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew :coingecko-price-scraper-job:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-coingecko-pricing",
+      "cmd": "docker build -f backend-rust/Dockerfile --target coingecko-pricing-app -t chainargos/coingecko-pricing .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target coingecko-pricing-app -t chainargos/coingecko-pricing .|dir=.|env="
+    },
+    {
+      "name": "build-docker-coingecko-scraped-pricing-import-job",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew :coingecko-scraped-pricing-import-job:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew :coingecko-scraped-pricing-import-job:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-eth-grpc-server",
+      "cmd": "docker build -f backend-rust/Dockerfile --target eth-grpc-server -t chainargos/eth-grpc-server .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target eth-grpc-server -t chainargos/eth-grpc-server .|dir=.|env="
+    },
+    {
+      "name": "build-docker-eth-processor",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-eth-transfer-validation-job",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-transfer-validation-job:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-transfer-validation-job:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-legacy-grpc-server",
+      "cmd": "docker build -f backend-rust/Dockerfile --target legacy-grpc-server -t chainargos/legacy-grpc-server .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target legacy-grpc-server -t chainargos/legacy-grpc-server .|dir=.|env="
+    },
+    {
+      "name": "build-docker-platform-prototype",
+      "cmd": "./frontend/platform-prototype/build.sh",
+      "dir": ".",
+      "leaf_identity": "./frontend/platform-prototype/build.sh|dir=.|env="
+    },
+    {
+      "name": "build-docker-preview-platform",
+      "cmd": "./frontend/platform/build.sh",
+      "dir": ".",
+      "leaf_identity": "./frontend/platform/build.sh|dir=.|env="
+    },
+    {
+      "name": "build-docker-processor-compare",
+      "cmd": "docker build -f backend-rust/Dockerfile --target processor-compare-app -t chainargos/processor-compare .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target processor-compare-app -t chainargos/processor-compare .|dir=.|env="
+    },
+    {
+      "name": "build-docker-redshift-dump-job",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew :redshift-dump-job:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew :redshift-dump-job:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-rust-bitcoin-processor",
+      "cmd": "docker build -f backend-rust/Dockerfile --target bitcoin-processor-app -t chainargos/rust-bitcoin-processor .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target bitcoin-processor-app -t chainargos/rust-bitcoin-processor .|dir=.|env="
+    },
+    {
+      "name": "build-docker-rust-ethereum-processor",
+      "cmd": "docker build -f backend-rust/Dockerfile --target eth-processor-app -t chainargos/rust-ethereum-processor .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target eth-processor-app -t chainargos/rust-ethereum-processor .|dir=.|env="
+    },
+    {
+      "name": "build-docker-rust-tron-processor",
+      "cmd": "docker build -f backend-rust/Dockerfile --target tron-processor-app -t chainargos/rust-tron-processor .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target tron-processor-app -t chainargos/rust-tron-processor .|dir=.|env="
+    },
+    {
+      "name": "build-docker-transfer-monitor",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :transfer-monitor-app:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :transfer-monitor-app:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-tron-grpc-server",
+      "cmd": "docker build -f backend-rust/Dockerfile --target tron-grpc-server -t chainargos/tron-grpc-server .",
+      "dir": ".",
+      "leaf_identity": "docker build -f backend-rust/Dockerfile --target tron-grpc-server -t chainargos/tron-grpc-server .|dir=.|env="
+    },
+    {
+      "name": "build-docker-tron-processor",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :tron-processor-app:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :tron-processor-app:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-tron-transfer-validation-job",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :tron-transfer-validation-job:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :tron-transfer-validation-job:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-wallet-screening-app",
+      "cmd": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :whitelabel-app:dockerBuild",
+      "dir": ".",
+      "leaf_identity": "cd backend && ./gradlew clean && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :whitelabel-app:dockerBuild|dir=.|env="
+    },
+    {
+      "name": "build-docker-wallet-screening-ui",
+      "cmd": "./frontend/wallet-screening/build.sh",
+      "dir": ".",
+      "leaf_identity": "./frontend/wallet-screening/build.sh|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "build"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "docker-up",
+      "cmd": "docker compose up \"$@\" -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up \"$@\" -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-base-processor",
+      "cmd": "docker compose down base-processor && docker compose up rabbitmq redis base-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down base-processor && docker compose up rabbitmq redis base-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-bitcoin-processor",
+      "cmd": "docker compose up rabbitmq bitcoin-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up rabbitmq bitcoin-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-blockchain-explorer",
+      "cmd": "docker compose up eth-grpc-server tron-grpc-server legacy-grpc-server blockchain-explorer -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up eth-grpc-server tron-grpc-server legacy-grpc-server blockchain-explorer -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-bsc-processor",
+      "cmd": "docker compose down bsc-processor && docker compose up rabbitmq redis bsc-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down bsc-processor && docker compose up rabbitmq redis bsc-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-coingecko-pricing",
+      "cmd": "docker compose up coingecko-pricing -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up coingecko-pricing -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-dev",
+      "cmd": "set -euo pipefail\ndocker compose up postgresql rabbitmq redis -d\nif [ \"${JACKIN:-}\" = \"1\" ] || [ \"${JACKIN_CLAUDE_ENV:-}\" = \"jackin\" ]; then\n  echo \"Docker environment detected; waiting for PostgreSQL to be ready...\"\n  until docker exec chainargos-postgresql pg_isready -U chainargos -d chainargos >/dev/null 2>&1; do sleep 1; done\n  echo \"Initializing databases...\"\n  docker exec -i chainargos-postgresql psql -v ON_ERROR_STOP=0 -U chainargos < docker/postgresql/init-databases.sql\nfi\n",
+      "dir": ".",
+      "leaf_identity": "set -euo pipefail docker compose up postgresql rabbitmq redis -d if [ \"${JACKIN:-}\" = \"1\" ] || [ \"${JACKIN_CLAUDE_ENV:-}\" = \"jackin\" ]; then echo \"Docker environment detected; waiting for PostgreSQL to be ready...\" until docker exec chainargos-postgresql pg_isready -U chainargos -d chainargos >/dev/null 2>&1; do sleep 1; done echo \"Initializing databases...\" docker exec -i chainargos-postgresql psql -v ON_ERROR_STOP=0 -U chainargos < docker/postgresql/init-databases.sql fi|dir=.|env="
+    },
+    {
+      "name": "docker-up-eth-grpc-server",
+      "cmd": "docker compose up eth-grpc-server -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up eth-grpc-server -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-eth-transfer-validation-job",
+      "cmd": "docker compose up eth-transfer-validation-job -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up eth-transfer-validation-job -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-ethereum-processor",
+      "cmd": "docker compose down ethereum-processor && docker compose up rabbitmq redis ethereum-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down ethereum-processor && docker compose up rabbitmq redis ethereum-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-ethereum-processor2",
+      "cmd": "docker compose down ethereum-processor2 && docker compose up rabbitmq redis ethereum-processor2 -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down ethereum-processor2 && docker compose up rabbitmq redis ethereum-processor2 -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-kellnr",
+      "cmd": "docker compose up kellnr -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up kellnr -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-kestra",
+      "cmd": "docker compose up kestra -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up kestra -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-legacy-grpc-server",
+      "cmd": "docker compose up legacy-grpc-server -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up legacy-grpc-server -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-nginx",
+      "cmd": "docker compose up nginx -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up nginx -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-platform-prototype",
+      "cmd": "docker compose up platform-prototype -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up platform-prototype -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-preview-platform",
+      "cmd": "docker compose up preview-platform -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up preview-platform -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-redshift-eth-transfer-validation-job",
+      "cmd": "docker compose up redshift-eth-transfer-validation-job -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up redshift-eth-transfer-validation-job -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-redshift-tron-transfer-validation-job",
+      "cmd": "docker compose up redshift-tron-transfer-validation-job -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up redshift-tron-transfer-validation-job -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-rust-bitcoin-processor",
+      "cmd": "docker compose up rabbitmq rust-bitcoin-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up rabbitmq rust-bitcoin-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-rust-ethereum-processor",
+      "cmd": "docker compose up rabbitmq redis rust-ethereum-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up rabbitmq redis rust-ethereum-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-rust-tron-processor",
+      "cmd": "docker compose up rabbitmq redis rust-tron-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up rabbitmq redis rust-tron-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-transfer-monitor",
+      "cmd": "docker compose down transfer-monitor && docker compose up rabbitmq redis transfer-monitor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down transfer-monitor && docker compose up rabbitmq redis transfer-monitor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-tron-grpc-server",
+      "cmd": "docker compose up tron-grpc-server -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up tron-grpc-server -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-tron-processor",
+      "cmd": "docker compose up rabbitmq redis tron-processor -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up rabbitmq redis tron-processor -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-tron-processor2",
+      "cmd": "docker compose down tron-processor2 && docker compose up rabbitmq redis tron-processor2 -d",
+      "dir": ".",
+      "leaf_identity": "docker compose down tron-processor2 && docker compose up rabbitmq redis tron-processor2 -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-tron-transfer-validation-job",
+      "cmd": "docker compose up tron-transfer-validation-job -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up tron-transfer-validation-job -d|dir=.|env="
+    },
+    {
+      "name": "docker-up-wallet-screening",
+      "cmd": "docker compose up wallet-screening wallet-screening-ui -d",
+      "dir": ".",
+      "leaf_identity": "docker compose up wallet-screening wallet-screening-ui -d|dir=.|env="
+    },
+    {
+      "name": "fmt",
+      "cmd": "cargo fmt --all -- --check",
+      "dir": ".",
+      "leaf_identity": "cargo fmt --all -- --check|dir=.|env="
+    },
+    {
+      "name": "lint",
+      "cmd": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "dir": ".",
+      "leaf_identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env="
+    },
+    {
+      "name": "restart-docker-base-processor",
+      "cmd": "git pull && mise run build-docker-eth-processor && mise run docker-up-base-processor && docker logs -f chainargos-base-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-processor && mise run docker-up-base-processor && docker logs -f chainargos-base-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-bitcoin-processor",
+      "cmd": "git pull && mise run build-docker-bitcoin-processor && mise run docker-up-bitcoin-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-bitcoin-processor && mise run docker-up-bitcoin-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-blockchain-explorer",
+      "cmd": "git pull && mise run build-docker-eth-grpc-server && mise run build-docker-tron-grpc-server && mise run build-docker-legacy-grpc-server && mise run build-docker-blockchain-explorer && mise run docker-up-blockchain-explorer && docker logs -f chainargos-blockchain-explorer",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-grpc-server && mise run build-docker-tron-grpc-server && mise run build-docker-legacy-grpc-server && mise run build-docker-blockchain-explorer && mise run docker-up-blockchain-explorer && docker logs -f chainargos-blockchain-explorer|dir=.|env="
+    },
+    {
+      "name": "restart-docker-bsc-processor",
+      "cmd": "git pull && mise run build-docker-eth-processor && mise run docker-up-bsc-processor && docker logs -f chainargos-bsc-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-processor && mise run docker-up-bsc-processor && docker logs -f chainargos-bsc-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-coingecko-pricing",
+      "cmd": "git pull && mise run build-docker-coingecko-pricing && mise run docker-up-coingecko-pricing && docker logs -f chainargos-coingecko-pricing",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-coingecko-pricing && mise run docker-up-coingecko-pricing && docker logs -f chainargos-coingecko-pricing|dir=.|env="
+    },
+    {
+      "name": "restart-docker-eth-grpc-server",
+      "cmd": "git pull && mise run build-docker-eth-grpc-server && mise run docker-up-eth-grpc-server && docker logs -f chainargos-eth-grpc-server",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-grpc-server && mise run docker-up-eth-grpc-server && docker logs -f chainargos-eth-grpc-server|dir=.|env="
+    },
+    {
+      "name": "restart-docker-eth-transfer-validation-job",
+      "cmd": "git pull && mise run build-docker-eth-transfer-validation-job && mise run docker-up-eth-transfer-validation-job && docker logs -f chainargos-eth-transfer-validation-job",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-transfer-validation-job && mise run docker-up-eth-transfer-validation-job && docker logs -f chainargos-eth-transfer-validation-job|dir=.|env="
+    },
+    {
+      "name": "restart-docker-ethereum-processor",
+      "cmd": "git pull && mise run build-docker-eth-processor && mise run docker-up-ethereum-processor && docker logs -f chainargos-ethereum-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-processor && mise run docker-up-ethereum-processor && docker logs -f chainargos-ethereum-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-ethereum-processor2",
+      "cmd": "git pull && mise run build-docker-eth-processor && mise run docker-up-ethereum-processor2 && docker logs -f chainargos-ethereum-processor2",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-processor && mise run docker-up-ethereum-processor2 && docker logs -f chainargos-ethereum-processor2|dir=.|env="
+    },
+    {
+      "name": "restart-docker-legacy-grpc-server",
+      "cmd": "git pull && mise run build-docker-legacy-grpc-server && mise run docker-up-legacy-grpc-server && docker logs -f chainargos-legacy-grpc-server",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-legacy-grpc-server && mise run docker-up-legacy-grpc-server && docker logs -f chainargos-legacy-grpc-server|dir=.|env="
+    },
+    {
+      "name": "restart-docker-platform-prototype",
+      "cmd": "git pull && mise run build-docker-platform-prototype && mise run docker-up-platform-prototype",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-platform-prototype && mise run docker-up-platform-prototype|dir=.|env="
+    },
+    {
+      "name": "restart-docker-preview-platform",
+      "cmd": "git pull && mise run build-docker-preview-platform && mise run docker-up-preview-platform",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-preview-platform && mise run docker-up-preview-platform|dir=.|env="
+    },
+    {
+      "name": "restart-docker-redshift-eth-transfer-validation-job",
+      "cmd": "git pull && mise run build-docker-eth-transfer-validation-job && mise run docker-up-redshift-eth-transfer-validation-job && docker logs -f chainargos-redshift-eth-transfer-validation-job",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-eth-transfer-validation-job && mise run docker-up-redshift-eth-transfer-validation-job && docker logs -f chainargos-redshift-eth-transfer-validation-job|dir=.|env="
+    },
+    {
+      "name": "restart-docker-redshift-tron-transfer-validation-job",
+      "cmd": "git pull && mise run build-docker-tron-transfer-validation-job && mise run docker-up-redshift-tron-transfer-validation-job && docker logs -f chainargos-redshift-tron-transfer-validation-job",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-tron-transfer-validation-job && mise run docker-up-redshift-tron-transfer-validation-job && docker logs -f chainargos-redshift-tron-transfer-validation-job|dir=.|env="
+    },
+    {
+      "name": "restart-docker-rust-bitcoin-processor",
+      "cmd": "git pull && mise run build-docker-rust-bitcoin-processor && mise run docker-up-rust-bitcoin-processor && docker logs -f chainargos-rust-bitcoin-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-rust-bitcoin-processor && mise run docker-up-rust-bitcoin-processor && docker logs -f chainargos-rust-bitcoin-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-rust-ethereum-processor",
+      "cmd": "git pull && mise run build-docker-rust-ethereum-processor && mise run docker-up-rust-ethereum-processor && docker logs -f chainargos-rust-ethereum-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-rust-ethereum-processor && mise run docker-up-rust-ethereum-processor && docker logs -f chainargos-rust-ethereum-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-rust-tron-processor",
+      "cmd": "git pull && mise run build-docker-rust-tron-processor && mise run docker-up-rust-tron-processor && docker logs -f chainargos-rust-tron-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-rust-tron-processor && mise run docker-up-rust-tron-processor && docker logs -f chainargos-rust-tron-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-transfer-monitor",
+      "cmd": "git pull && mise run build-docker-transfer-monitor && mise run docker-up-transfer-monitor && docker logs -f chainargos-transfer-monitor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-transfer-monitor && mise run docker-up-transfer-monitor && docker logs -f chainargos-transfer-monitor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-tron-grpc-server",
+      "cmd": "git pull && mise run build-docker-tron-grpc-server && mise run docker-up-tron-grpc-server && docker logs -f chainargos-tron-grpc-server",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-tron-grpc-server && mise run docker-up-tron-grpc-server && docker logs -f chainargos-tron-grpc-server|dir=.|env="
+    },
+    {
+      "name": "restart-docker-tron-processor",
+      "cmd": "git pull && mise run build-docker-tron-processor && mise run docker-up-tron-processor && docker logs -f chainargos-tron-processor",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-tron-processor && mise run docker-up-tron-processor && docker logs -f chainargos-tron-processor|dir=.|env="
+    },
+    {
+      "name": "restart-docker-tron-processor2",
+      "cmd": "git pull && mise run build-docker-tron-processor && mise run docker-up-tron-processor2 && docker logs -f chainargos-tron-processor2",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-tron-processor && mise run docker-up-tron-processor2 && docker logs -f chainargos-tron-processor2|dir=.|env="
+    },
+    {
+      "name": "restart-docker-tron-transfer-validation-job",
+      "cmd": "git pull && mise run build-docker-tron-transfer-validation-job && mise run docker-up-tron-transfer-validation-job && docker logs -f chainargos-tron-transfer-validation-job",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-tron-transfer-validation-job && mise run docker-up-tron-transfer-validation-job && docker logs -f chainargos-tron-transfer-validation-job|dir=.|env="
+    },
+    {
+      "name": "restart-docker-wallet-screening",
+      "cmd": "git pull && mise run build-docker-wallet-screening-app && mise run build-docker-wallet-screening-ui && mise run docker-up-wallet-screening",
+      "dir": ".",
+      "leaf_identity": "git pull && mise run build-docker-wallet-screening-app && mise run build-docker-wallet-screening-ui && mise run docker-up-wallet-screening|dir=.|env="
+    },
+    {
+      "name": "test",
+      "cmd": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail",
+      "dir": ".",
+      "leaf_identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail|dir=.|env="
+    },
+    {
+      "name": "test-java-eth-processor",
+      "cmd": "mise run docker-up-dev && cd backend && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:check",
+      "dir": ".",
+      "leaf_identity": "mise run docker-up-dev && cd backend && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:check|dir=.|env="
+    },
+    {
+      "name": "test-java-eth-processor-rerun",
+      "cmd": "mise run docker-up-dev && cd backend && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:cleanTest :eth-processor-app:check",
+      "dir": ".",
+      "leaf_identity": "mise run docker-up-dev && cd backend && ./gradlew --no-parallel flywayMigrate jooqCodegen && ./gradlew :eth-processor-app:cleanTest :eth-processor-app:check|dir=.|env="
+    },
+    {
+      "name": "test-rust-eth-processor",
+      "cmd": "cargo nextest run -p eth-processor-app",
+      "dir": ".",
+      "leaf_identity": "cargo nextest run -p eth-processor-app|dir=.|env="
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo clippy --workspace --all-targets --locked -- -D warnings|dir=.|env=",
+      "tasks": [
+        "lint"
+      ]
+    },
+    {
+      "identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail --no-run|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    },
+    {
+      "identity": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --workspace --all-targets --profile ci --no-tests=fail|dir=.|env=",
+      "tasks": [
+        "test"
+      ]
+    },
+    {
+      "identity": "cargo fmt --all -- --check|dir=.|env=",
+      "tasks": [
+        "fmt"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    }
+  ],
+  "findings": []
+}

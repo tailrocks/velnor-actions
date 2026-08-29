@@ -1,0 +1,59 @@
+{
+  "slug": "tailrocks/homebrew-ruxel",
+  "class": "tap",
+  "scheduled_gates": [
+    "install",
+    "build",
+    "lint"
+  ],
+  "tasks": [
+    {
+      "name": "actionlint",
+      "cmd": "actionlint",
+      "dir": ".",
+      "leaf_identity": "actionlint|dir=.|env="
+    },
+    {
+      "name": "build",
+      "cmd": "set -e; for f in Formula/*.rb; do ruby -c \"$f\" || exit 1; done",
+      "dir": ".",
+      "leaf_identity": "set -e; for f in Formula/*.rb; do ruby -c \"$f\" || exit 1; done|dir=.|env="
+    },
+    {
+      "name": "ci",
+      "depends": [
+        "build",
+        "lint"
+      ],
+      "dir": "."
+    },
+    {
+      "name": "lint",
+      "depends": [
+        "actionlint"
+      ],
+      "dir": "."
+    }
+  ],
+  "reachable_leaves": [
+    {
+      "identity": "actionlint|dir=.|env=",
+      "tasks": [
+        "actionlint"
+      ]
+    },
+    {
+      "identity": "mise install --locked|dir=.|env=",
+      "tasks": [
+        "gate:install"
+      ]
+    },
+    {
+      "identity": "set -e; for f in Formula/*.rb; do ruby -c \"$f\" || exit 1; done|dir=.|env=",
+      "tasks": [
+        "build"
+      ]
+    }
+  ],
+  "findings": []
+}
