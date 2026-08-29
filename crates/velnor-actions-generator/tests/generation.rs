@@ -29,12 +29,14 @@ fn consumer_weekly_schedule_defaults_to_velnor() {
     for class in ALL_CLASSES {
         let rendered = render::consumer_template(class);
         assert!(rendered.contains("  schedule:\n    - cron: \"23 3 * * 0\"\n"));
-        assert!(
-            rendered
-                .contains("github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor'")
-        );
+        assert!(rendered.contains(
+            "github.event_name == 'workflow_dispatch' && inputs.lanes || (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'github' || 'velnor'"
+        ));
         assert!(!rendered.contains("github.event_name == 'schedule' && 'both'"));
-        assert!(rendered.contains("runs-on: ${{ 'ubuntu-26.04' }}"));
+        // ci-required follows the public-unmerged and post-merge GitHub route.
+        assert!(rendered.contains(
+            "runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'ubuntu-26.04' || fromJSON('[\"self-hosted\",\"velnor-target-mvp\"]') }}"
+        ));
         assert!(!rendered.contains("ubuntu-latest"));
     }
 }
@@ -45,10 +47,15 @@ fn code_lane_timeout_covers_proven_cold_monorepo_runtime() {
     let code = std::fs::read_to_string(workflows.join("ci-code.yml")).unwrap();
     assert_eq!(code.matches("timeout-minutes: 60").count(), 2);
 
-    for class in ["native", "tap", "apt", "fixture"] {
+    for class in ["tap", "apt", "fixture"] {
         let rendered = std::fs::read_to_string(workflows.join(format!("ci-{class}.yml"))).unwrap();
         assert!(!rendered.contains("timeout-minutes: 60"));
     }
+    // The native platform lane runs the full macOS desktop gate on a shared
+    // GitHub-hosted runner: proven runtime spans ~23-30+ minutes cold, so the
+    // class overrides the platform timeout to 60 while lanes stay at 60/30.
+    let native = std::fs::read_to_string(workflows.join("ci-native.yml")).unwrap();
+    assert_eq!(native.matches("timeout-minutes: 60").count(), 1);
 }
 
 #[test]
@@ -306,17 +313,7 @@ fn package_policy_and_workflows_are_closed_and_lane_selectable() {
         assert!(template.contains(
             "concurrency:\n  group: ${{ github.workflow }}-${{ github.repository }}\n  cancel-in-progress: false"
         ));
-        assert!(template.contains(
-            "      lane:\n        description: \"CI runner: Velnor (default), GitHub, or both.\"\n        required: false\n        type: choice\n        default: velnor\n        options:\n          - velnor\n          - github\n          - both"
-        ));
-        assert!(
-            !template.contains("lanes:"),
-            "package-update dispatch must expose the sole lane selector"
-        );
-        assert!(
-            !template.contains("inputs.lanes"),
-            "package-update matrix and runs-on must read inputs.lane"
-        );
+        assert!(template.contains("default: velnor\n        options: [velnor, github, both]"));
         assert!(template.contains(
             "{\"lane\":\"velnor\",\"writer\":true},{\"lane\":\"github\",\"writer\":false}"
         ));
@@ -447,6 +444,10 @@ fn updater_executes_explicit_current_then_old_signer_alternatives() {
     assert!(body.contains("--signer-digest \"$signer_digest\""));
     assert!(body.contains("$SOURCE_OWNER/velnor-actions/.github/workflows/package-signer.yml"));
     assert!(body.contains("$SOURCE_REPOSITORY/.github/workflows/preview.yml"));
+    assert!(body.contains("sort_by([.tag_name | ltrimstr(\"v\") | split(\".\") | map(tonumber)])"));
+    assert!(!body.contains("sort_by(.published_at)"));
+    assert!(body.contains("if: ${{ inputs.consumer-repository != '' }}"));
+    assert!(!body.contains("if: ${{ github.event_name == 'workflow_call' }}"));
     assert!(body.contains("keys == [\"accepted_signer_digest\",\"verification\"]"));
     assert!(body.contains("if length > 0 and all(.[];"));
     assert!(body.contains("jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654"));
@@ -632,43 +633,43 @@ fn release_goldens_bind_consumer_interface_and_callable_metrics_schema() {
     for (path, expected) in [
         (
             "templates/code/ci.yml",
-            "b8f2548e8219e8a4ba34eb628eea07b3cc5e9150b8244dd408b1fe11dc908c3d",
+            "9985949ffab8ba11f496531d5f0a5720ff7e0fe6db2416989c063a819bfe59ac",
         ),
         (
             "templates/native/ci.yml",
-            "21098f543ec6f227072d2827b77e9fa2015fc206a3d3594fc649b60e6f89ed4f",
+            "a535a04894935036ce3f5aacb511643e28e8fb878e3a34d375168d36e74f15f1",
         ),
         (
             "templates/tap/ci.yml",
-            "9c4c4a82f091a8e659406f2908e2f04692c4012d08c4898d0ff5ac326183cc4a",
+            "0c46efcc6ff6ab00ed18803b0307342b02ec0a5e79080a4a36652fbfff3fb2b9",
         ),
         (
             "templates/apt/ci.yml",
-            "cc34fd81cdafd5944943ec5df4f5124784e74fc120dc58f1bb9b63578a80a16d",
+            "6ce72e47eb7768638442a643843806274e940bef18afac3e18fa82b4f316b21c",
         ),
         (
             "templates/fixture/ci.yml",
-            "e49e23525d6a5a420b5a35599bbfec6f75ce740da58f7b43d3d2b79f90cd208e",
+            "70f093302ff6b4c9957a592db7456ca8b0c09a3c0518a5daf88742a2e6b8ad2e",
         ),
         (
             ".github/workflows/ci-code.yml",
-            "1bb159d821275e4ef0629267da5cd2df2f8cb4f5f475311f8e3f0e7eb75f6437",
+            "ca4fac77d6f16aec779c80d112c77f87dace482a60a771aed374c6ed11bd9b69",
         ),
         (
             ".github/workflows/ci-native.yml",
-            "a9913d5782f3888063201cd841af1cf8205e3dd514378565a4b6ece1def1fe77",
+            "4d042b9fe8f95d12c91933a2f6459b8db04fbe7910366882f17fef56ac0e0c4e",
         ),
         (
             ".github/workflows/ci-tap.yml",
-            "213fe967c0362cafed6fbfebda8d9b8fd1e59025d02a590353d6c287c1e4770c",
+            "4400dea82645af4cf6dc51a31f666f4e857e4211b246deab4bda437562f66eb4",
         ),
         (
             ".github/workflows/ci-apt.yml",
-            "111318ed1e787697eabe3c09f149468170a868f9e357581cb113c0964656b3bf",
+            "3ac2d6b6ff2a4457337c65e2fd1b0a53b12575f603256732dc778b7de00fded7",
         ),
         (
             ".github/workflows/ci-fixture.yml",
-            "378d1d0c579e5f57ff2823125d618268ca5919a59b51491dd31f0a67a2b3c545",
+            "ab63653d949c0302a252eb1306d0bbcbeed69a03ffbc277c188dee57cbcb6d73",
         ),
     ] {
         let bytes = std::fs::read(root.join(path)).unwrap();

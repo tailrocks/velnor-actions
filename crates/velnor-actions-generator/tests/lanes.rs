@@ -36,18 +36,19 @@ fn resolve_lanes_expands_both_independently() {
 }
 
 #[test]
-fn omitted_lane_defaults_to_velnor_for_every_owner() {
+fn unmerged_and_push_events_use_github_lane_for_every_owner() {
     let t = render::consumer_template(RepositoryClass::Code);
-    assert!(t.contains("github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor'"));
+    let lane = "github.event_name == 'workflow_dispatch' && inputs.lanes || (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'github' || 'velnor'";
+    assert!(t.contains(lane));
     assert!(t.contains("type: choice"));
     assert!(t.contains("default: velnor"));
     assert_eq!(
         t.matches(
-            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor' }}"
+            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'github' || 'velnor' }}"
         )
         .count(),
         3,
-        "every owner-local caller uses the same Velnor default",
+        "every owner-local caller uses the same public-unmerged GitHub route",
     );
 }
 
@@ -158,6 +159,41 @@ fn same_gate_semantics_on_both_lanes_for_portable_gates() {
 }
 
 #[test]
+fn rust_classes_use_one_bounded_local_sccache_setup_per_lane() {
+    for class in [RepositoryClass::Code, RepositoryClass::Native] {
+        let workflow = callable(class);
+        assert_eq!(
+            workflow
+                .matches("mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba")
+                .count(),
+            2,
+            "one sccache setup per Rust lane"
+        );
+        assert_eq!(workflow.matches("RUSTC_WRAPPER: sccache").count(), 2);
+        assert_eq!(workflow.matches("CARGO_INCREMENTAL: \"0\"").count(), 2);
+        assert_eq!(workflow.matches("SCCACHE_CACHE_SIZE: 20G").count(), 2);
+        assert_eq!(
+            workflow.matches("SCCACHE_GHA_ENABLED: \"false\"").count(),
+            2
+        );
+        assert_eq!(workflow.matches("version: v0.16.0").count(), 2);
+    }
+}
+
+#[test]
+fn non_rust_classes_do_not_get_compiler_cache_setup() {
+    for class in [
+        RepositoryClass::Tap,
+        RepositoryClass::Apt,
+        RepositoryClass::Fixture,
+    ] {
+        let workflow = callable(class);
+        assert!(!workflow.contains("mozilla-actions/sccache-action@"));
+        assert!(!workflow.contains("RUSTC_WRAPPER: sccache"));
+    }
+}
+
+#[test]
 fn optional_operation_interface_is_complete_and_non_selector() {
     let template = render::consumer_template(RepositoryClass::Code);
     for input in [
@@ -176,9 +212,14 @@ fn optional_operation_interface_is_complete_and_non_selector() {
         assert!(template.contains(&format!("{input}:")), "missing {input}");
     }
     assert_eq!(
+        template.matches("\n      lanes:").count(),
+        1,
+        "one root lanes input"
+    );
+    assert_eq!(
         template.matches("\n      lane:").count(),
-        4,
-        "one root input plus three forwarded lane values"
+        3,
+        "three forwarded lane values"
     );
     assert!(template.contains("cancel-in-progress: ${{ inputs.benchmark_campaign == '' }}"));
 }

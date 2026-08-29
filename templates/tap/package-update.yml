@@ -6,15 +6,11 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
-      lane:
-        description: "CI runner: Velnor (default), GitHub, or both."
-        required: false
+      lanes:
+        description: velnor (default) | github | both
         type: choice
         default: velnor
-        options:
-          - velnor
-          - github
-          - both
+        options: [velnor, github, both]
 
 permissions:
   attestations: read
@@ -30,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lane == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lane == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
+        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lanes == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
         channel: @PACKAGE_CHANNELS@
     uses: jackin-project/velnor-actions/.github/workflows/package-updater.yml@@JACKIN_FLEET_SHA@ # @CALVER@
     with:
@@ -50,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lane == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lane == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
+        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lanes == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
         channel: @PACKAGE_CHANNELS@
     uses: tailrocks/velnor-actions/.github/workflows/package-updater.yml@@TAILROCKS_FLEET_SHA@ # @CALVER@
     with:
@@ -70,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lane == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lane == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
+        config: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.lanes == 'both') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'both')) && '[{"lane":"velnor","writer":true},{"lane":"github","writer":false}]' || ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && '[{"lane":"github","writer":true}]' || '[{"lane":"velnor","writer":true}]') }}
         channel: @PACKAGE_CHANNELS@
     uses: ChainArgos/velnor-actions/.github/workflows/package-updater.yml@@CHAINARGOS_FLEET_SHA@ # @CALVER@
     with:
@@ -88,7 +84,7 @@ jobs:
   package-update-required:
     if: ${{ always() }}
     needs: [jackin_project, tailrocks, chainargos]
-    runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.lane == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && 'ubuntu-26.04' || fromJSON('["self-hosted","velnor-target-mvp"]') }}
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || (github.event_name != 'workflow_dispatch' && vars.VELNOR_AUTOMATIC_LANES == 'github')) && 'ubuntu-26.04' || fromJSON('["self-hosted","velnor-target-mvp"]') }}
     timeout-minutes: 5
     steps:
       - env:

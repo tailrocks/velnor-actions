@@ -42,6 +42,11 @@ const CHECKOUT_VERSION: &str = "v7.0.1";
 /// Pinned mise setup action (full 40-hex SHA) and its version comment.
 const MISE_ACTION_REF: &str = "7e36c90d9ab29c415a2384db3006f3ec8a8cc654";
 const MISE_ACTION_VERSION: &str = "v4.2.4";
+/// Pinned local compiler-cache action.
+const SCCACHE_ACTION_REF: &str = "fc920bf0ec8de6ee65d409111f7ec508035751ba";
+const SCCACHE_ACTION_VERSION: &str = "v0.0.11";
+/// Default platform-lane job timeout unless a class overrides it.
+const DEFAULT_PLATFORM_TIMEOUT_MINUTES: u32 = 30;
 /// Pinned GitHub cache action.
 const CACHE_ACTION_REF: &str = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const CACHE_ACTION_VERSION: &str = "v6.1.0";
@@ -148,18 +153,12 @@ pub fn consumer_template(class: RepositoryClass) -> String {
     b.line(4, "- cron: \"23 3 * * 0\"");
     b.line(2, "workflow_dispatch:");
     b.line(4, "inputs:");
-    b.line(6, "lane:");
-    b.line(
-        8,
-        "description: \"CI runner: Velnor (default), GitHub, or both.\"",
-    );
-    b.line(8, "required: false");
+    // Canonical lane selector, byte-identical across all fleet workflows.
+    b.line(6, "lanes:");
+    b.line(8, "description: velnor (default) | github | both");
     b.line(8, "type: choice");
     b.line(8, "default: velnor");
-    b.line(8, "options:");
-    b.line(10, "- velnor");
-    b.line(10, "- github");
-    b.line(10, "- both");
+    b.line(8, "options: [velnor, github, both]");
     consumer_auxiliary_inputs(&mut b);
     b.blank();
     b.line(0, "permissions:");
@@ -194,9 +193,13 @@ pub fn consumer_template(class: RepositoryClass) -> String {
             ),
         );
         b.line(4, "with:");
+        // Public unmerged code and post-merge pushes stay on GitHub-hosted
+        // runners until lower-trust Velnor isolation is live-proven. Scheduled
+        // runs and the default workflow_dispatch remain Velnor; dispatch keeps
+        // the explicit lane escape hatch.
         b.line(
             6,
-            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor' }}",
+            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'github' || 'velnor' }}",
         );
         for input in AUXILIARY_INPUTS {
             b.line(6, &format!("{input}: ${{{{ inputs.{input} || '' }}}}"));
@@ -212,11 +215,12 @@ pub fn consumer_template(class: RepositoryClass) -> String {
         b.line(6, &format!("- {owner}"));
     }
     b.line(4, "if: ${{ always() }}");
-    // actionlint v1.7.12 does not yet recognize the Ubuntu 26.04 hosted label
-    // when it is a literal. Keep the exact runtime binding while allowing
-    // every consumer repository to lint the generated caller without local
-    // actionlint configuration.
-    b.line(4, "runs-on: ${{ 'ubuntu-26.04' }}");
+    // Public unmerged pull requests, merge queues, post-merge pushes, and an
+    // explicit lanes=github dispatch use GitHub-hosted infrastructure. The
+    // default scheduled/manual path remains Velnor. Keep both bindings behind
+    // expressions because actionlint does not recognize the Ubuntu 26.04
+    // hosted label as a literal.
+    b.line(4, "runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.lanes == 'github') || github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && 'ubuntu-26.04' || fromJSON('[\"self-hosted\",\"velnor-target-mvp\"]') }}");
     b.line(4, "timeout-minutes: 10");
     b.line(4, "permissions:");
     b.line(6, "contents: read");
@@ -330,6 +334,18 @@ pub fn callable_workflow(
         8,
         "value: ${{ jobs.validate-request.outputs.workflow_blob }}",
     );
+    // Canonical fleet escape hatch: every workflow exposes the exact `lanes`
+    // dispatch input (velnor default | github | both). `lane` stays the
+    // call-time selector for workflow_call consumers; a standalone dispatch of
+    // the callable drives the identical lane jobs through `inputs.lanes`
+    // (see the normalization at the end of this function).
+    b.line(2, "workflow_dispatch:");
+    b.line(4, "inputs:");
+    b.line(6, "lanes:");
+    b.line(8, "description: velnor (default) | github | both");
+    b.line(8, "type: choice");
+    b.line(8, "default: velnor");
+    b.line(8, "options: [velnor, github, both]");
     b.blank();
     b.line(0, "permissions:");
     b.line(2, "actions: read");
@@ -338,7 +354,13 @@ pub fn callable_workflow(
     b.line(0, "jobs:");
     b.line(2, "validate-request:");
     b.line(4, "name: validate request");
-    b.line(4, "runs-on: ubuntu-26.04");
+    // Support jobs follow the selected lane: the Velnor lane must not keep
+    // GitHub-hosted evidence, and push (routed to the GitHub lane by the
+    // generated caller) must never land on velnor-trusted.
+    b.line(
+        4,
+        "runs-on: ${{ inputs.lane == 'github' && 'ubuntu-26.04' || 'velnor-trusted' }}",
+    );
     b.line(4, "timeout-minutes: 5");
     b.line(4, "permissions:");
     b.line(6, "actions: read");
@@ -412,6 +434,13 @@ pub fn callable_workflow(
     b.line(4, &format!("timeout-minutes: {lane_timeout}"));
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
+    if matches!(class, RepositoryClass::Code | RepositoryClass::Native) {
+        b.line(4, "env:");
+        b.line(6, "CARGO_INCREMENTAL: \"0\"");
+        b.line(6, "RUSTC_WRAPPER: sccache");
+        b.line(6, "SCCACHE_CACHE_SIZE: 20G");
+        b.line(6, "SCCACHE_GHA_ENABLED: \"false\"");
+    }
     b.line(4, "steps:");
     lane_steps(
         &mut b,
@@ -435,6 +464,13 @@ pub fn callable_workflow(
     b.line(4, &format!("timeout-minutes: {lane_timeout}"));
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
+    if matches!(class, RepositoryClass::Code | RepositoryClass::Native) {
+        b.line(4, "env:");
+        b.line(6, "CARGO_INCREMENTAL: \"0\"");
+        b.line(6, "RUSTC_WRAPPER: sccache");
+        b.line(6, "SCCACHE_CACHE_SIZE: 20G");
+        b.line(6, "SCCACHE_GHA_ENABLED: \"false\"");
+    }
     b.line(4, "steps:");
     lane_steps(
         &mut b,
@@ -459,7 +495,10 @@ pub fn callable_workflow(
         b.line(4, &format!("name: {platform_name}"));
         b.line(4, "needs: validate-request");
         b.line(4, &format!("runs-on: {platform_runner}"));
-        b.line(4, "timeout-minutes: 30");
+        let platform_timeout = contract
+            .platform_timeout_minutes
+            .unwrap_or(DEFAULT_PLATFORM_TIMEOUT_MINUTES);
+        b.line(4, &format!("timeout-minutes: {platform_timeout}"));
         b.line(4, "outputs:");
         b.line(6, "contract: ${{ steps.aggregate.outputs.contract }}");
         b.line(4, "steps:");
@@ -497,7 +536,11 @@ pub fn callable_workflow(
     }
     b.line(6, "- cache-proof-contract");
     b.line(4, "if: ${{ always() }}");
-    b.line(4, "runs-on: ubuntu-26.04");
+    // Same lane-following rule as validate-request.
+    b.line(
+        4,
+        "runs-on: ${{ inputs.lane == 'github' && 'ubuntu-26.04' || 'velnor-trusted' }}",
+    );
     b.line(4, "timeout-minutes: 10");
     b.line(4, "outputs:");
     b.line(6, "contract: ${{ steps.verdict.outputs.contract }}");
@@ -542,7 +585,13 @@ pub fn callable_workflow(
     b.line(8, "shell: bash");
     b.run_block(8, CONTRACT_VERDICT_SCRIPT);
 
+    // Unify the lane selector across both entry events: workflow_call carries
+    // `lane` (default velnor), a standalone workflow_dispatch carries `lanes`.
+    // Every reference resolves the call-time value first and falls back to the
+    // dispatch input, so both entry events drive identical lane jobs from one
+    // workflow definition — only `runs-on` differs per selected lane.
     b.finish()
+        .replace("inputs.lane", "(inputs.lane || inputs.lanes)")
 }
 
 const AUXILIARY_INPUTS: [&str; 11] = [
@@ -2040,6 +2089,21 @@ fn lane_steps(
             );
         }
     }
+    if matches!(
+        contract.class,
+        RepositoryClass::Code | RepositoryClass::Native
+    ) {
+        b.line(6, "- name: Set up local sccache");
+        b.line(
+            8,
+            &format!(
+                "uses: mozilla-actions/sccache-action@{SCCACHE_ACTION_REF} # {SCCACHE_ACTION_VERSION}"
+            ),
+        );
+        b.line(8, "with:");
+        b.line(10, "version: v0.16.0");
+        b.line(10, "disable_annotations: \"false\"");
+    }
     b.line(6, "- name: Set up mise toolchain");
     b.line(
         8,
@@ -2126,6 +2190,12 @@ fn cache_step(
 fn gate_step(b: &mut Builder, gate: &Gate, run_gate: &str) {
     b.line(6, &format!("- name: {} gate", gate.name));
     b.line(8, &format!("uses: {run_gate}"));
+    // Gate commands are identical on both lanes, but a gate may invoke `gh`
+    // (for example remote-closure-check fetching a pinned action.yml). The
+    // Velnor fleet provides ambient runner auth; GitHub-hosted runners do not.
+    // Pin the token explicitly so no gate depends on ambient auth.
+    b.line(8, "env:");
+    b.line(10, "GH_TOKEN: ${{ github.token }}");
     b.line(8, "with:");
     b.line(10, &format!("name: {}", gate.name));
     b.line(10, &format!("command: {}", gate.command));

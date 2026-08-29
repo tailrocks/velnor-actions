@@ -71,6 +71,13 @@ on:
       workflow_blob:
         description: "Git blob identity of the authenticated generated caller."
         value: ${{ jobs.validate-request.outputs.workflow_blob }}
+  workflow_dispatch:
+    inputs:
+      lanes:
+        description: velnor (default) | github | both
+        type: choice
+        default: velnor
+        options: [velnor, github, both]
 
 permissions:
   actions: read
@@ -79,7 +86,7 @@ permissions:
 jobs:
   validate-request:
     name: validate request
-    runs-on: ubuntu-26.04
+    runs-on: ${{ (inputs.lane || inputs.lanes) == 'github' && 'ubuntu-26.04' || 'velnor-trusted' }}
     timeout-minutes: 5
     permissions:
       actions: read
@@ -114,7 +121,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-          EXPECTED_CALLER_TEMPLATE_SHA256: e49e23525d6a5a420b5a35599bbfec6f75ce740da58f7b43d3d2b79f90cd208e
+          EXPECTED_CALLER_TEMPLATE_SHA256: 70f093302ff6b4c9957a592db7456ca8b0c09a3c0518a5daf88742a2e6b8ad2e
           DECLARED_CACHE_IDS: tools
         run: |
           set -euo pipefail
@@ -219,7 +226,7 @@ jobs:
   velnor-lane:
     name: velnor lane
     needs: validate-request
-    if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && (inputs.lane == 'velnor' || inputs.lane == 'both') }}
+    if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && ((inputs.lane || inputs.lanes) == 'velnor' || (inputs.lane || inputs.lanes) == 'both') }}
     runs-on: ${{ 'velnor-trusted' }}
     timeout-minutes: 30
     outputs:
@@ -360,7 +367,7 @@ jobs:
         run: |
           rm -rf -- .velnor-protected-base
       - name: Restore-only tools cache
-        if: ${{ inputs.lane == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        if: ${{ (inputs.lane || inputs.lanes) == 'both' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -368,7 +375,7 @@ jobs:
             .local/share/mise/installs
           key: ci-v1/fixture/tools/${{ runner.os }}-${{ runner.arch }}/${{ steps.cache-keys.outputs['tools-toolchain'] }}/${{ steps.cache-keys.outputs['tools-lock'] }}/${{ steps.cache-keys.outputs['tools-phase'] }}
       - name: Restore and publish tools cache
-        if: ${{ inputs.lane != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+        if: ${{ (inputs.lane || inputs.lanes) != 'both' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -381,31 +388,41 @@ jobs:
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: install
           command: mise install --locked
       - name: build gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: build
           command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: test
           command: mise run test
       - name: lint gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: lint
           command: mise run lint
       - name: format gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: format
           command: mise run fmt
       - name: Publish isolated unmerged tools cache
-        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.lane != 'both' }}
+        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (inputs.lane || inputs.lanes) != 'both' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -419,7 +436,7 @@ jobs:
   github-lane:
     name: github lane
     needs: validate-request
-    if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && (inputs.lane == 'github' || inputs.lane == 'both') }}
+    if: ${{ inputs.benchmark_campaign == '' && inputs.cache_proof_id == '' && ((inputs.lane || inputs.lanes) == 'github' || (inputs.lane || inputs.lanes) == 'both') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     outputs:
@@ -523,26 +540,36 @@ jobs:
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: install
           command: mise install --locked
       - name: build gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: build
           command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: test
           command: mise run test
       - name: lint gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: lint
           command: mise run lint
       - name: format gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: format
           command: mise run fmt
@@ -1164,26 +1191,36 @@ jobs:
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: install
           command: mise install --locked
       - name: build gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: build
           command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: test
           command: mise run test
       - name: lint gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: lint
           command: mise run lint
       - name: format gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: format
           command: mise run fmt
@@ -1491,26 +1528,36 @@ jobs:
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: install gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: install
           command: mise install --locked
       - name: build gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: build
           command: mise run build
       - name: test gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: test
           command: mise run test
       - name: lint gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: lint
           command: mise run lint
       - name: format gate
         uses: tailrocks/velnor-actions/actions/run-gate@3057391f93f3bfc0fe570ee08cfcea9533ea3f92
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           name: format
           command: mise run fmt
@@ -2136,7 +2183,7 @@ jobs:
       - github-lane
       - cache-proof-contract
     if: ${{ always() }}
-    runs-on: ubuntu-26.04
+    runs-on: ${{ (inputs.lane || inputs.lanes) == 'github' && 'ubuntu-26.04' || 'velnor-trusted' }}
     timeout-minutes: 10
     outputs:
       contract: ${{ steps.verdict.outputs.contract }}
@@ -2144,7 +2191,7 @@ jobs:
       - name: Aggregate lane verdict
         id: verdict
         env:
-          LANE: ${{ inputs.lane }}
+          LANE: ${{ (inputs.lane || inputs.lanes) }}
           VELNOR_RESULT: ${{ needs.velnor-lane.result }}
           VELNOR_CONTRACT: ${{ needs.velnor-lane.outputs.contract }}
           GITHUB_RESULT: ${{ needs.github-lane.result }}
