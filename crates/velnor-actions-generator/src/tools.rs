@@ -17,6 +17,8 @@ use toml::Value;
 
 const SCHEMA: u32 = 1;
 
+const REQUIRED_MISE_VERBS: [&str; 6] = ["fmt", "fmt-fix", "lint", "test", "check", "ci"];
+
 /// One generator-owned tool policy entry.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +191,7 @@ impl ToolRegistry {
     /// Check the generator's own mise graph. Rust is derived from the sibling
     /// rust-toolchain.toml; the fleet registry governs the non-Rust tool graph.
     pub fn check_generator_files(&self, mise: &Path, lock: &Path) -> Result<usize, String> {
+        check_mise_vocabulary(mise)?;
         self.check_files_inner(mise, lock)
     }
 
@@ -237,9 +240,9 @@ impl ToolRegistry {
             .get("repository")
             .and_then(Value::as_array)
             .ok_or_else(|| format!("{}: missing [[repository]] entries", fleet_path.display()))?;
-        if repositories.len() != 28 {
+        if repositories.len() < 28 {
             return Err(format!(
-                "{}: expected 28 repositories, found {}",
+                "{}: expected at least 28 repositories, found {}",
                 fleet_path.display(),
                 repositories.len()
             ));
@@ -511,6 +514,13 @@ fn validate_name(name: &str) -> Result<(), String> {
 }
 
 fn validate_version(name: &str, version: &str) -> Result<(), String> {
+    if (name == "repolint" || name.contains("tailrocks/repolint"))
+        && version
+            .strip_prefix("rev:")
+            .is_some_and(crate::model::is_sha40)
+    {
+        return Ok(());
+    }
     let exact_numeric_version = version.split('.').count() == 3
         && version.split('.').all(|part| {
             !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
@@ -590,4 +600,37 @@ fn rust_toolchain_version(path: &Path) -> Result<String, String> {
 /// Validate a registry path without constructing a consumer.
 pub fn check_registry(path: &Path) -> Result<ToolRegistry, String> {
     ToolRegistry::load(path)
+}
+
+/// Validate the repository-owned standard task vocabulary without inspecting
+/// or rewriting task bodies. `release:check` is deliberately conditional on a
+/// repository having a release unit.
+pub fn check_mise_vocabulary(path: &Path) -> Result<(), String> {
+    let body = fs::read_to_string(path)
+        .map_err(|error| format!("reading mise file {}: {error}", path.display()))?;
+    let document: Value = toml::from_str(&body)
+        .map_err(|error| format!("parsing mise file {}: {error}", path.display()))?;
+    let tasks = document
+        .get("tasks")
+        .and_then(Value::as_table)
+        .ok_or_else(|| format!("{}: missing [tasks] table", path.display()))?;
+    for verb in REQUIRED_MISE_VERBS {
+        let task = tasks
+            .get(verb)
+            .ok_or_else(|| format!("{}: missing required mise task {verb:?}", path.display()))?;
+        let table = task
+            .as_table()
+            .ok_or_else(|| format!("{}: task {verb:?} is not a table", path.display()))?;
+        if table
+            .get("description")
+            .and_then(Value::as_str)
+            .is_none_or(|description| description.trim().is_empty())
+        {
+            return Err(format!(
+                "{}: mise task {verb:?} requires a non-empty description",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }

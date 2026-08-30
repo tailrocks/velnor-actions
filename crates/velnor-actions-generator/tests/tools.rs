@@ -32,7 +32,7 @@ fn canonical_root_graph_is_locked_and_rust_uses_mise_from_toolchain_policy() {
         registry
             .check_generator_files(&root.join("mise.toml"), &root.join("mise.lock"))
             .expect("check canonical tool graph"),
-        6
+        9
     );
     assert!(!registry.entries().contains_key("rust"));
 }
