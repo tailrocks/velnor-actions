@@ -686,8 +686,13 @@ fn render_consumer_to_dir_writes_envelope_artifacts_without_touching_repo_tasks(
         .replace(
             "\"aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\"",
             "\"github:nextest-rs/nextest\" = \"cargo-nextest-0.9.140\"",
+        )
+        .replace(
+            "\"aqua:rustsec/rustsec/cargo-audit\" = \"0.22.2\"",
+            "\"github:rustsec/rustsec\" = \"cargo-audit/v0.22.2\"",
         );
     assert!(legacy_mise.contains("github:nextest-rs/nextest"));
+    assert!(legacy_mise.contains("github:rustsec/rustsec"));
     std::fs::write(out.join("mise.toml"), legacy_mise).unwrap();
     let legacy_lock = std::fs::read_to_string(root.join("mise.lock"))
         .unwrap()
@@ -698,8 +703,17 @@ fn render_consumer_to_dir_writes_envelope_artifacts_without_touching_repo_tasks(
         .replace(
             "backend = \"aqua:nextest-rs/nextest/cargo-nextest\"",
             "backend = \"github:nextest-rs/nextest\"",
+        )
+        .replace(
+            "tools.\"aqua:rustsec/rustsec/cargo-audit\"",
+            "tools.\"github:rustsec/rustsec\"",
+        )
+        .replace(
+            "backend = \"aqua:rustsec/rustsec/cargo-audit\"",
+            "backend = \"github:rustsec/rustsec\"",
         );
     assert!(legacy_lock.contains("github:nextest-rs/nextest"));
+    assert!(legacy_lock.contains("github:rustsec/rustsec"));
     std::fs::write(out.join("mise.lock"), legacy_lock).unwrap();
     std::fs::write(out.join("AGENTS.md"), "# Repository rules\n").unwrap();
     let path = velnor_actions_generator::render_consumer_to_dir(
@@ -734,14 +748,29 @@ fn render_consumer_to_dir_writes_envelope_artifacts_without_touching_repo_tasks(
             .contains("aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\"")
     );
     assert!(
+        std::fs::read_to_string(out.join("mise.toml"))
+            .unwrap()
+            .contains("aqua:rustsec/rustsec/cargo-audit\" = \"0.22.2\"")
+    );
+    assert!(
         !std::fs::read_to_string(out.join("mise.toml"))
+            .unwrap()
+            .contains("github:nextest-rs/nextest")
+    );
+    assert!(
+        !std::fs::read_to_string(out.join("mise.toml"))
+            .unwrap()
+            .contains("github:rustsec/rustsec")
+    );
+    assert!(
+        !std::fs::read_to_string(out.join("mise.lock"))
             .unwrap()
             .contains("github:nextest-rs/nextest")
     );
     assert!(
         !std::fs::read_to_string(out.join("mise.lock"))
             .unwrap()
-            .contains("github:nextest-rs/nextest")
+            .contains("github:rustsec/rustsec")
     );
 }
 

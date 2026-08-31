@@ -9,6 +9,7 @@ schema = 1
 [tools]
 actionlint = { version = "1.7.12", source = "actionlint", backend = "aqua:rhysd/actionlint", notes = "Use mise's native actionlint alias." }
 "cargo-deny" = { version = "0.20.2", source = "cargo:cargo-deny", notes = "Native cargo-deny is unavailable; use mise's cargo backend." }
+"cargo-audit" = { version = "0.22.2", source = "aqua:rustsec/rustsec/cargo-audit", notes = "Exact Aqua mapping for the legacy cargo-audit consumer declaration." }
 nextest = { version = "0.9.140", source = "aqua:nextest-rs/nextest/cargo-nextest", notes = "Native nextest is unavailable; use the pinned mise Aqua backend." }
 gh = { version = "2.96.0", source = "gh", backend = "aqua:cli/cli", notes = "Use mise's native GitHub CLI alias." }
 mise = { version = "2026.7.12", source = "github:jdx/mise", notes = "Pinned mise runtime used by locked repository tasks." }

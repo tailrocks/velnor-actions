@@ -253,9 +253,14 @@ pub fn render_consumer_to_dir(
     let existing = std::fs::read_to_string(&mise_path)
         .map_err(|e| format!("reading {}: {e}", mise_path.display()))?;
     let (migrated, legacy_nextest) = tools::ToolRegistry::migrate_legacy_nextest(&existing)?;
+    let (migrated, legacy_cargo_audit) =
+        tools::ToolRegistry::migrate_legacy_cargo_audit(&migrated)?;
     let mut required_tools = tools::FLEET_TASK_TOOLS.to_vec();
     if legacy_nextest {
         required_tools.push("nextest");
+    }
+    if legacy_cargo_audit {
+        required_tools.push("cargo-audit");
     }
     let normalized =
         registry.normalize_mise_file_with_tools(&migrated, required_tools.iter().copied())?;

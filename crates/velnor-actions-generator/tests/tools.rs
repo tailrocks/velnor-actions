@@ -32,9 +32,18 @@ fn canonical_root_graph_is_locked_and_rust_uses_mise_from_toolchain_policy() {
         registry
             .check_generator_files(&root.join("mise.toml"), &root.join("mise.lock"))
             .expect("check canonical tool graph"),
-        9
+        10
     );
     assert!(!registry.entries().contains_key("rust"));
+    assert_eq!(
+        registry.entries().get("cargo-audit"),
+        Some(&velnor_actions_generator::tools::ToolSpec {
+            version: "0.22.2".to_owned(),
+            source: "aqua:rustsec/rustsec/cargo-audit".to_owned(),
+            backend: None,
+            notes: "Exact Aqua mapping for the legacy cargo-audit consumer declaration.".to_owned(),
+        })
+    );
 }
 
 #[test]

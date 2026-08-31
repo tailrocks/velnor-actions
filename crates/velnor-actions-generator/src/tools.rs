@@ -26,6 +26,10 @@ const LEGACY_NEXTEST_KEY: &str = "github:nextest-rs/nextest";
 const LEGACY_NEXTEST_VERSION: &str = "cargo-nextest-0.9.140";
 const CANONICAL_NEXTEST_KEY: &str = "aqua:nextest-rs/nextest/cargo-nextest";
 const CANONICAL_NEXTEST_VERSION: &str = "0.9.140";
+const LEGACY_CARGO_AUDIT_KEY: &str = "github:rustsec/rustsec";
+const LEGACY_CARGO_AUDIT_VERSION: &str = "cargo-audit/v0.22.2";
+const CANONICAL_CARGO_AUDIT_KEY: &str = "aqua:rustsec/rustsec/cargo-audit";
+const CANONICAL_CARGO_AUDIT_VERSION: &str = "0.22.2";
 
 /// One generator-owned tool policy entry.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -217,57 +221,31 @@ impl ToolRegistry {
     /// still pass the returned body through `normalize_mise_file_with_tools`.
     /// No other legacy source or version is accepted.
     pub(crate) fn migrate_legacy_nextest(body: &str) -> Result<(String, bool), String> {
-        let document: Value = toml::from_str(body)
-            .map_err(|error| format!("parsing mise file for legacy migration: {error}"))?;
-        let Some(tools) = document.get("tools").and_then(Value::as_table) else {
-            return Ok((body.to_owned(), false));
-        };
-        let Some(value) = tools.get(LEGACY_NEXTEST_KEY) else {
-            return Ok((body.to_owned(), false));
-        };
-        if tools.contains_key(CANONICAL_NEXTEST_KEY) {
-            return Err(format!(
-                "mise declares both legacy {LEGACY_NEXTEST_KEY:?} and canonical {CANONICAL_NEXTEST_KEY:?} nextest tools"
-            ));
-        }
-        if value.as_str() != Some(LEGACY_NEXTEST_VERSION) {
-            return Err(format!(
-                "legacy nextest migration accepts only {LEGACY_NEXTEST_KEY:?} = {LEGACY_NEXTEST_VERSION:?}, found {value:?}"
-            ));
-        }
+        migrate_legacy_tool(
+            body,
+            "nextest",
+            LEGACY_NEXTEST_KEY,
+            LEGACY_NEXTEST_VERSION,
+            CANONICAL_NEXTEST_KEY,
+            CANONICAL_NEXTEST_VERSION,
+        )
+    }
 
-        let mut output = String::new();
-        let mut in_tools = false;
-        let mut replaced = false;
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if header_name(trimmed) == Some("[tools]") {
-                in_tools = true;
-            } else if in_tools && top_level_header(trimmed) {
-                in_tools = false;
-            }
-            if in_tools && is_legacy_nextest_assignment(trimmed) {
-                let indentation = &line[..line.len() - line.trim_start().len()];
-                output.push_str(indentation);
-                writeln!(
-                    output,
-                    "{} = {}",
-                    toml_key(CANONICAL_NEXTEST_KEY),
-                    toml_string(CANONICAL_NEXTEST_VERSION)
-                )
-                .expect("writing a String cannot fail");
-                replaced = true;
-            } else {
-                output.push_str(line);
-                output.push('\n');
-            }
-        }
-        if !replaced {
-            return Err(format!(
-                "legacy nextest declaration {LEGACY_NEXTEST_KEY:?} must be a simple [tools] assignment"
-            ));
-        }
-        Ok((output, true))
+    /// Normalize the exact cargo-audit declaration emitted by older consumer
+    /// repositories before applying the strict registry check.
+    ///
+    /// This compatibility path is intentionally render-only: callers must
+    /// still pass the returned body through `normalize_mise_file_with_tools`.
+    /// No other legacy source or version is accepted.
+    pub(crate) fn migrate_legacy_cargo_audit(body: &str) -> Result<(String, bool), String> {
+        migrate_legacy_tool(
+            body,
+            "cargo-audit",
+            LEGACY_CARGO_AUDIT_KEY,
+            LEGACY_CARGO_AUDIT_VERSION,
+            CANONICAL_CARGO_AUDIT_KEY,
+            CANONICAL_CARGO_AUDIT_VERSION,
+        )
     }
 
     /// Project selected tool lock entries from a canonical source lock into a
@@ -322,8 +300,8 @@ impl ToolRegistry {
                 spec.source.as_str(),
                 spec.backend.as_deref().unwrap_or(""),
             ];
-            if name == "nextest" {
-                candidates.push(LEGACY_NEXTEST_KEY);
+            if let Some(legacy_key) = legacy_key_for(name) {
+                candidates.push(legacy_key);
             }
             let source_key = candidates
                 .iter()
@@ -651,6 +629,67 @@ impl ToolRegistry {
     }
 }
 
+fn migrate_legacy_tool(
+    body: &str,
+    name: &str,
+    legacy_key: &str,
+    legacy_version: &str,
+    canonical_key: &str,
+    canonical_version: &str,
+) -> Result<(String, bool), String> {
+    let document: Value = toml::from_str(body)
+        .map_err(|error| format!("parsing mise file for legacy migration: {error}"))?;
+    let Some(tools) = document.get("tools").and_then(Value::as_table) else {
+        return Ok((body.to_owned(), false));
+    };
+    let Some(value) = tools.get(legacy_key) else {
+        return Ok((body.to_owned(), false));
+    };
+    if tools.contains_key(canonical_key) {
+        return Err(format!(
+            "mise declares both legacy {legacy_key:?} and canonical {canonical_key:?} {name} tools"
+        ));
+    }
+    if value.as_str() != Some(legacy_version) {
+        return Err(format!(
+            "legacy {name} migration accepts only {legacy_key:?} = {legacy_version:?}, found {value:?}"
+        ));
+    }
+
+    let mut output = String::new();
+    let mut in_tools = false;
+    let mut replaced = false;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if header_name(trimmed) == Some("[tools]") {
+            in_tools = true;
+        } else if in_tools && top_level_header(trimmed) {
+            in_tools = false;
+        }
+        if in_tools && is_legacy_assignment(trimmed, legacy_key, legacy_version) {
+            let indentation = &line[..line.len() - line.trim_start().len()];
+            output.push_str(indentation);
+            writeln!(
+                output,
+                "{} = {}",
+                toml_key(canonical_key),
+                toml_string(canonical_version)
+            )
+            .expect("writing a String cannot fail");
+            replaced = true;
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    if !replaced {
+        return Err(format!(
+            "legacy {name} declaration {legacy_key:?} must be a simple [tools] assignment"
+        ));
+    }
+    Ok((output, true))
+}
+
 fn tool_value(value: &Value, key: &str, path: &Path) -> Result<(String, Option<String>), String> {
     match value {
         Value::String(version) => Ok((version.clone(), None)),
@@ -747,9 +786,17 @@ fn toml_key(value: &str) -> String {
     }
 }
 
-fn is_legacy_nextest_assignment(line: &str) -> bool {
+fn is_legacy_assignment(line: &str, key: &str, version: &str) -> bool {
     let declaration = line.split_once('#').map_or(line, |(prefix, _)| prefix);
-    declaration.trim() == "\"github:nextest-rs/nextest\" = \"cargo-nextest-0.9.140\""
+    declaration.trim() == format!("{} = {}", toml_key(key), toml_string(version))
+}
+
+fn legacy_key_for(name: &str) -> Option<&'static str> {
+    match name {
+        "nextest" => Some(LEGACY_NEXTEST_KEY),
+        "cargo-audit" => Some(LEGACY_CARGO_AUDIT_KEY),
+        _ => None,
+    }
 }
 
 fn top_level_header(line: &str) -> bool {
@@ -843,6 +890,38 @@ mod tests {
     }
 
     #[test]
+    fn render_migrates_only_the_exact_legacy_cargo_audit_declaration() {
+        let legacy = "[tools]\n\"github:rustsec/rustsec\" = \"cargo-audit/v0.22.2\"\n[tasks.fmt]\ndescription = \"fmt\"\n";
+        let (migrated, changed) = ToolRegistry::migrate_legacy_cargo_audit(legacy).unwrap();
+
+        assert!(changed);
+        assert!(migrated.contains("\"aqua:rustsec/rustsec/cargo-audit\" = \"0.22.2\""));
+        assert!(!migrated.contains("github:rustsec/rustsec"));
+        assert!(migrated.contains("[tasks.fmt]\ndescription = \"fmt\""));
+
+        let wrong = legacy.replace("cargo-audit/v0.22.2", "cargo-audit/v0.22.3");
+        let error = ToolRegistry::migrate_legacy_cargo_audit(&wrong).unwrap_err();
+        assert!(error.contains("accepts only"), "unexpected error: {error}");
+
+        let both = legacy.replace(
+            "[tools]\n",
+            "[tools]\n\"aqua:rustsec/rustsec/cargo-audit\" = \"0.22.2\"\n",
+        );
+        let error = ToolRegistry::migrate_legacy_cargo_audit(&both).unwrap_err();
+        assert!(error.contains("both legacy"), "unexpected error: {error}");
+
+        let single_quoted = legacy.replace(
+            "\"github:rustsec/rustsec\" = \"cargo-audit/v0.22.2\"",
+            "'github:rustsec/rustsec' = 'cargo-audit/v0.22.2'",
+        );
+        let error = ToolRegistry::migrate_legacy_cargo_audit(&single_quoted).unwrap_err();
+        assert!(
+            error.contains("simple [tools] assignment"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn render_migration_projects_legacy_nextest_lock_to_canonical_source() {
         let registry = registry();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -855,6 +934,22 @@ mod tests {
             .unwrap();
         assert!(projected.contains("tools.\"aqua:nextest-rs/nextest/cargo-nextest\""));
         assert!(!projected.contains("github:nextest-rs/nextest"));
+        assert_eq!(registry.check_text(mise, &projected).unwrap(), 1);
+    }
+
+    #[test]
+    fn render_migration_projects_legacy_cargo_audit_lock_to_canonical_source() {
+        let registry = registry();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source_lock = fs::read_to_string(root.join("mise.lock")).unwrap();
+        let legacy_lock = "# @generated\n\nlockfile_version = 1\n\n[[tools.\"github:rustsec/rustsec\"]]\nversion = \"cargo-audit/v0.22.2\"\nbackend = \"github:rustsec/rustsec\"\n";
+        let mise = "[tools]\n\"aqua:rustsec/rustsec/cargo-audit\" = \"0.22.2\"\n";
+
+        let projected = registry
+            .project_lock_file(legacy_lock, &source_lock, ["cargo-audit"])
+            .unwrap();
+        assert!(projected.contains("tools.\"aqua:rustsec/rustsec/cargo-audit\""));
+        assert!(!projected.contains("github:rustsec/rustsec"));
         assert_eq!(registry.check_text(mise, &projected).unwrap(), 1);
     }
 }
