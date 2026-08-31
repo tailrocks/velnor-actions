@@ -466,6 +466,18 @@ fn package_generation_writes_exact_callables_and_templates() {
 }
 
 #[test]
+fn signer_admits_caller_verified_release_commit_sha() {
+    let body = velnor_actions_generator::package::SIGNER_WORKFLOW;
+    // The caller's release gate triple-verifies tag == default branch ==
+    // release commit and passes the verified 40-hex SHA; admission binds to
+    // that immutable commit, not a re-resolvable tag ref.
+    assert!(body.contains("[[ \"$SOURCE_REF\" =~ ^[0-9a-f]{40}$ ]]"));
+    assert!(!body.contains("refs/tags/v*"));
+    // Callable-only guard from PR #77 stays untouched.
+    assert!(body.contains("if: ${{ inputs.lanes == '' }}"));
+}
+
+#[test]
 fn package_consumer_renderer_binds_release_signer_slots() {
     let policy = velnor_actions_generator::package::PackagePolicy::load(
         &common::repo_root(),
