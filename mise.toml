@@ -101,8 +101,8 @@ description = "Run the M1 repository-shape and workflow security gates"
 depends = ["_toolchain"]
 run = [
   "repolint check",
-  "if test -f .alint.yml; then if test -f repolint.toml && grep -q '^\\[repo\\]$' repolint.toml; then alint check --fail-on-warning; else alint check; fi; fi",
-  "zizmor .github/workflows",
+  "if test -f repolint.toml && grep -q '^\\[repo\\]$' repolint.toml; then alint check --fail-on-warning; else if alint check --fail-on-warning; then :; else status=$?; case $status in 1|2) echo fleet:check-warning-alint-findings >&2;; *) exit $status;; esac; fi; fi",
+  "if test -f repolint.toml && grep -q '^\\[repo\\]$' repolint.toml; then zizmor .github/workflows; else if zizmor .github/workflows; then :; else status=$?; case $status in 11|12|13|14) echo fleet:check-warning-zizmor-findings >&2;; *) exit $status;; esac; fi; fi",
 ]
 
 [tasks."fleet:map"]

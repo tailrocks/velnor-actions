@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::cache::CacheContract;
 use crate::composite;
 use crate::forks::ForkTable;
-use crate::model::{FleetManifest, is_sha40};
+use crate::model::{FleetManifest, RepositoryKind, is_sha40};
 use crate::package::{self, PackagePolicy};
 use crate::releases::ReleaseTable;
 use crate::render::{self, ACTIONS_REPO, CALVER_PLACEHOLDER, FLEET_SHA_PLACEHOLDER};
@@ -99,6 +99,7 @@ pub fn fleet_audit(root: &Path, write_deferred: bool, offline: bool) -> Result<S
     // against stale local generator outputs.
     audit(root)?;
     let manifest = FleetManifest::load(root)?;
+    let forks = ForkTable::load(root)?;
     let mut deferred = Vec::new();
     let scratch = (!offline).then(ScratchGuard::new).transpose()?;
     for repository in manifest.repositories() {
@@ -120,7 +121,20 @@ pub fn fleet_audit(root: &Path, write_deferred: bool, offline: bool) -> Result<S
             if !status.success() {
                 return Err(format!("shallow clone failed for {}", repository.slug));
             }
+            if repository.census.kind == RepositoryKind::OutOfScope {
+                eprintln!(
+                    "fleet audit: skipping adoption and tool invariants for out-of-scope {}",
+                    repository.slug
+                );
+                continue;
+            }
             let adoption = cross_check_local_repo(repository, checkout)?;
+            if let Err(error) = audit_cloned_consumer(repository, checkout, &forks) {
+                if adoption == AdoptionState::Adopted {
+                    return Err(error);
+                }
+                eprintln!("fleet audit warning: {error}");
+            }
             run_fleet_tool(
                 repository,
                 checkout,
@@ -154,7 +168,9 @@ pub fn fleet_audit(root: &Path, write_deferred: bool, offline: bool) -> Result<S
             }
             deferred.extend(read_deferred(repository, checkout)?);
         } else {
-            enforce_first_seen(repository)?;
+            if repository.census.kind != RepositoryKind::OutOfScope {
+                enforce_first_seen(repository)?;
+            }
         }
     }
     if !offline {
@@ -182,6 +198,80 @@ pub fn fleet_audit(root: &Path, write_deferred: bool, offline: bool) -> Result<S
         "fleet audit valid: {} repositories, {} deferred items",
         manifest.repositories().len(),
         deferred.len()
+    ))
+}
+
+fn audit_cloned_consumer(
+    repository: &crate::model::Repository,
+    checkout: &Path,
+    forks: &ForkTable,
+) -> Result<(), String> {
+    let path = checkout.join(".github").join("workflows").join("ci.yml");
+    let actual = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: reading cloned consumer {}: {e}",
+            repository.slug,
+            path.display()
+        )
+    })?;
+    let (shas, calver) = materialized_binding(&actual, repository.class, forks, &repository.slug)?;
+    let template = render::consumer_template_for(repository.class, forks);
+    let refs: Vec<&str> = shas.iter().map(String::as_str).collect();
+    let expected = render::render_consumer_for(&template, forks, &refs, &calver)?;
+    require_equal(
+        &actual,
+        &expected,
+        &format!("{}:.github/workflows/ci.yml", repository.slug),
+    )
+}
+
+fn materialized_binding(
+    actual: &str,
+    class: RepositoryClass,
+    forks: &ForkTable,
+    repository: &str,
+) -> Result<(Vec<String>, String), String> {
+    let file = render::callable_file_name(class);
+    let mut shas = Vec::with_capacity(forks.len());
+    let mut calver = None;
+    for fork in forks.forks() {
+        let prefix = format!(
+            "uses: {}/{}/.github/workflows/{file}@",
+            fork.owner(),
+            ACTIONS_REPO
+        );
+        let rows: Vec<_> = actual
+            .lines()
+            .map(str::trim_start)
+            .filter_map(|line| line.strip_prefix(&prefix))
+            .collect();
+        if rows.len() != 1 {
+            return Err(format!(
+                "{repository}: cloned ci.yml must contain exactly one {prefix}<sha> # <calver> call"
+            ));
+        }
+        let (sha, version) = rows[0].split_once(" # ").ok_or_else(|| {
+            format!("{repository}: cloned {prefix} call must bind SHA and CalVer together")
+        })?;
+        if !is_sha40(sha) || version.is_empty() || version.contains('#') {
+            return Err(format!(
+                "{repository}: cloned {prefix} call has invalid SHA/CalVer binding"
+            ));
+        }
+        if let Some(previous) = &calver {
+            if previous != version {
+                return Err(format!(
+                    "{repository}: cloned ci.yml uses mixed CalVer release bindings"
+                ));
+            }
+        } else {
+            calver = Some(version.to_owned());
+        }
+        shas.push(sha.to_owned());
+    }
+    Ok((
+        shas,
+        calver.ok_or_else(|| format!("{repository}: cloned ci.yml has no release binding"))?,
     ))
 }
 
@@ -1824,6 +1914,32 @@ mod fleet_audit_tests {
         assert_eq!(
             cross_check_local_repo(&repository(), &root).unwrap(),
             AdoptionState::Adopted
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cloned_consumer_comparison_reads_actual_workflow_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "velnor-actions-cloned-consumer-test-{}-{}",
+            std::process::id(),
+            today_days().unwrap()
+        ));
+        let workflow = root.join(".github/workflows");
+        std::fs::create_dir_all(&workflow).unwrap();
+        let forks = ForkTable::canonical();
+        let template = render::consumer_template_for(RepositoryClass::Code, &forks);
+        let expected =
+            render::render_consumer_for(&template, &forks, &[AUDIT_RELEASE_SHA; 3], AUDIT_CALVER)
+                .unwrap();
+        std::fs::write(workflow.join("ci.yml"), expected).unwrap();
+        audit_cloned_consumer(&repository(), &root, &forks).unwrap();
+
+        std::fs::write(workflow.join("ci.yml"), "name: tampered\n").unwrap();
+        let error = audit_cloned_consumer(&repository(), &root, &forks).unwrap_err();
+        assert!(
+            error.contains("exactly one") || error.contains("diverges"),
+            "got: {error}"
         );
         std::fs::remove_dir_all(root).unwrap();
     }

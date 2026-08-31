@@ -4,9 +4,10 @@ mod common;
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::process::Command;
 
 use velnor_actions_generator::forks::ForkTable;
-use velnor_actions_generator::model::{FleetManifest, is_sha40};
+use velnor_actions_generator::model::{FleetManifest, RepositoryKind, is_sha40};
 use velnor_actions_generator::render::{self, CALVER_PLACEHOLDER, FLEET_SHA_PLACEHOLDER};
 use velnor_actions_generator::{ALL_CLASSES, RepositoryClass, audit, generate};
 
@@ -72,6 +73,88 @@ fn exact_membership_and_counts() {
     for r in m.repositories() {
         assert!(is_sha40(&r.baseline_sha), "{} sha is 40-hex", r.slug);
     }
+}
+
+#[test]
+fn task031_out_of_scope_census_row_is_authoritative() {
+    let manifest = load();
+    let row = manifest
+        .repositories()
+        .iter()
+        .find(|repository| repository.slug == "tailrocks/tailrocks-skills")
+        .expect("TASK-031 repository remains registered");
+    assert_eq!(row.census.kind, RepositoryKind::OutOfScope);
+    assert!(row.census.research);
+}
+
+#[test]
+fn containment_rule_is_scoped_to_path_bearing_build_fields() {
+    let config = velnor_actions_generator::policy::alint_config(RepositoryClass::Code);
+    assert!(config.contains(
+        "(?:^|[{,])\\s*[\"'']?(?:path|paths|build|build_dir|build-directory|directory|dir|workspace|members|manifest|root|context)"
+    ));
+    assert!(!config.contains("pattern: '(?:\\.\\./){2,}'"));
+}
+
+#[test]
+fn containment_rule_allows_package_readme_but_rejects_dependency_path_escape() {
+    if Command::new("alint").arg("--version").output().is_err() {
+        // The locked repository gate runs this behavioral check with alint
+        // installed; plain library-only test runs may not have the external
+        // linter on PATH.
+        return;
+    }
+    let root = common::temp_dir("containment");
+    let config = root.join(".alint.yml");
+    std::fs::write(
+        &config,
+        velnor_actions_generator::policy::alint_config(RepositoryClass::Code),
+    )
+    .unwrap();
+    let cargo_toml = root.join("Cargo.toml");
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"readme-link\"\nversion = \"0.1.0\"\nreadme = \"../../README.md\"\n",
+    )
+    .unwrap();
+    let pass = Command::new("alint")
+        .args([
+            "check",
+            "--config",
+            config.to_str().unwrap(),
+            "--only",
+            "containment.no-parent-escape",
+            "--fail-on-warning",
+            "--no-gitignore",
+            root.to_str().unwrap(),
+        ])
+        .status()
+        .expect("alint must be available in the locked gate environment");
+    assert!(
+        pass.success(),
+        "README path should not be a containment finding"
+    );
+
+    std::fs::write(
+        &cargo_toml,
+        "[dependencies]\nexternal = { path = \"../../outside\" }\n",
+    )
+    .unwrap();
+    let fail = Command::new("alint")
+        .args([
+            "check",
+            "--config",
+            config.to_str().unwrap(),
+            "--only",
+            "containment.no-parent-escape",
+            "--fail-on-warning",
+            "--no-gitignore",
+            root.to_str().unwrap(),
+        ])
+        .status()
+        .expect("alint must be available in the locked gate environment");
+    assert!(!fail.success(), "dependency path escape must be a finding");
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

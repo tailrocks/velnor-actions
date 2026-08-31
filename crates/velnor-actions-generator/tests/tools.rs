@@ -52,6 +52,37 @@ fn normalizing_consumer_preserves_authored_sections() {
 }
 
 #[test]
+fn fleet_task_tools_project_into_mise_and_lock_deterministically() {
+    let registry = registry();
+    let mise = "[tools]\nactionlint = \"1.7.12\"\n[tasks.fmt]\ndescription = \"fmt\"\n";
+    let first = registry
+        .normalize_mise_file_with_tools(mise, ["repolint", "alint", "zizmor"])
+        .unwrap();
+    let second = registry
+        .normalize_mise_file_with_tools(mise, ["zizmor", "alint", "repolint"])
+        .unwrap();
+    assert_eq!(first, second);
+    for needle in [
+        "\"cargo:alint\" = \"0.15.2\"",
+        "\"cargo:https://github.com/tailrocks/repolint\" = \"rev:df4a1011776485853b9bcd2ee32f63dca0b1003b\"",
+        "zizmor = \"1.29.0\"",
+    ] {
+        assert!(first.contains(needle), "missing {needle}");
+    }
+
+    let root = common::repo_root();
+    let source_lock = fs::read_to_string(root.join("mise.lock")).unwrap();
+    let projected = registry
+        .project_lock_file(
+            "",
+            &source_lock,
+            ["actionlint", "repolint", "alint", "zizmor"],
+        )
+        .unwrap();
+    assert_eq!(registry.check_text(&first, &projected).unwrap(), 4);
+}
+
+#[test]
 fn fixture_corpus_rejects_each_violation_class() {
     let root = common::repo_root().join("tests/fixtures/tools");
     let registry = ToolRegistry::load(&root.join("registry.toml")).expect("load fixture registry");
@@ -59,6 +90,12 @@ fn fixture_corpus_rejects_each_violation_class() {
     let clean_mise = fs::read_to_string(root.join("clean/mise.toml")).unwrap();
     let clean_lock = fs::read_to_string(root.join("clean/mise.lock")).unwrap();
     assert_eq!(registry.check_text(&clean_mise, &clean_lock).unwrap(), 2);
+    assert_eq!(
+        registry
+            .check_files(&root.join("clean/mise.toml"), &root.join("clean/mise.lock"))
+            .unwrap(),
+        3
+    );
 
     let cases = [
         ("registry-drift", "diverges"),

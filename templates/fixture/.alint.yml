@@ -17,7 +17,7 @@ rules:
     paths:
       include: ["**/*.toml", "**/*.yml", "**/*.yaml", "**/*.json", "**/*.swift", "**/*.gradle", "**/*.gradle.kts"]
       exclude: [".github/workflows/**"]
-    pattern: '(?:\.\./){2,}'
+    pattern: '(?im)(?:^|[{,])\s*["'']?(?:path|paths|build|build_dir|build-directory|directory|dir|workspace|members|manifest|root|context)["'']?\s*[:=][^#\n]*(?:\.\./){2,}'
     level: warning
     message: "Committed build/config paths must not escape the repository."
 

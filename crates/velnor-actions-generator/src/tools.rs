@@ -19,6 +19,9 @@ const SCHEMA: u32 = 1;
 
 const REQUIRED_MISE_VERBS: [&str; 6] = ["fmt", "fmt-fix", "lint", "test", "check", "ci"];
 
+/// Tools required by the generator-owned fleet tasks.
+pub const FLEET_TASK_TOOLS: [&str; 3] = ["repolint", "alint", "zizmor"];
+
 /// One generator-owned tool policy entry.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -147,8 +150,27 @@ impl ToolRegistry {
     /// Normalize the `[tools]` section of one consumer file while preserving
     /// all authored settings and tasks outside that section.
     pub fn normalize_mise_file(&self, body: &str) -> Result<String, String> {
+        self.normalize_mise_file_with_tools(body, [])
+    }
+
+    /// Normalize a consumer file and add the generator-owned tools required by
+    /// the supplied task projection. Existing authored tools remain intact.
+    pub fn normalize_mise_file_with_tools<'a, I>(
+        &self,
+        body: &str,
+        required: I,
+    ) -> Result<String, String>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
         let effective = self.parse_mise(body, Path::new("mise.toml"))?;
-        let names: Vec<&str> = effective.iter().map(|tool| tool.name.as_str()).collect();
+        let mut names: BTreeSet<&str> = effective.iter().map(|tool| tool.name.as_str()).collect();
+        for name in required {
+            if !self.entries.contains_key(name) {
+                return Err(format!("tool {name:?} is not in the registry"));
+            }
+            names.insert(name);
+        }
         let block = self.render_tools_block(names.iter().copied())?;
         let mut output = String::new();
         let mut in_tools = false;
@@ -179,6 +201,87 @@ impl ToolRegistry {
                 prefixed.push('\n');
             }
             return Ok(prefixed);
+        }
+        Ok(output)
+    }
+
+    /// Project selected tool lock entries from a canonical source lock into a
+    /// consumer lock. Existing non-selected entries are retained, while any
+    /// selected aliases are replaced by the registry's canonical lock key and
+    /// source record. TOML serialization gives the projection one deterministic
+    /// representation independent of the consumer's authored ordering.
+    pub fn project_lock_file<'a, I>(
+        &self,
+        existing: &str,
+        source: &str,
+        selected: I,
+    ) -> Result<String, String>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut document: Value = if existing.trim().is_empty() {
+            let mut document = toml::map::Map::new();
+            document.insert("lockfile_version".to_owned(), Value::Integer(1));
+            Value::Table(document)
+        } else {
+            toml::from_str(existing)
+                .map_err(|error| format!("parsing consumer mise.lock: {error}"))?
+        };
+        let source_document: Value = toml::from_str(source)
+            .map_err(|error| format!("parsing generator mise.lock: {error}"))?;
+        let source_tools = source_document
+            .get("tools")
+            .and_then(Value::as_table)
+            .ok_or_else(|| "generator mise.lock is missing [tools] entries".to_owned())?;
+        let tools = document
+            .as_table_mut()
+            .expect("TOML document is a table")
+            .entry("tools".to_owned())
+            .or_insert_with(|| Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| "consumer mise.lock tools is not a table".to_owned())?;
+
+        let selected: BTreeSet<&str> = selected.into_iter().collect();
+        for name in selected {
+            let spec = self
+                .entries
+                .get(name)
+                .ok_or_else(|| format!("tool {name:?} is not in the registry"))?;
+            let canonical_key = if spec.source.contains(':') {
+                spec.source.as_str()
+            } else {
+                name
+            };
+            let candidates = [
+                name,
+                spec.source.as_str(),
+                spec.backend.as_deref().unwrap_or(""),
+            ];
+            let source_key = candidates
+                .iter()
+                .find(|candidate| source_tools.contains_key(**candidate))
+                .ok_or_else(|| {
+                    format!("generator mise.lock has no entry for tool {name:?} ({canonical_key})")
+                })?;
+            for candidate in candidates {
+                if !candidate.is_empty() && candidate != canonical_key {
+                    tools.remove(candidate);
+                }
+            }
+            let value = source_tools
+                .get(*source_key)
+                .expect("source lock key found above")
+                .clone();
+            tools.insert(canonical_key.to_owned(), value);
+        }
+        let serialized = toml::to_string_pretty(&document)
+            .map_err(|error| format!("rendering projected mise.lock: {error}"))?;
+        let mut output = String::from(
+            "# @generated - this file is auto-generated by `mise lock` https://mise.jdx.dev/dev-tools/mise-lock.html\n\n",
+        );
+        output.push_str(&serialized);
+        if !output.ends_with('\n') {
+            output.push('\n');
         }
         Ok(output)
     }
@@ -214,7 +317,7 @@ impl ToolRegistry {
         self.check_rendered_equality(&effective, mise)?;
         let lock_body = fs::read_to_string(lock)
             .map_err(|error| format!("reading lockfile {}: {error}", lock.display()))?;
-        self.check_lock(&effective, &lock_body, lock)?;
+        self.check_lock(&effective, &lock_body, lock, false)?;
         Ok(effective.len())
     }
 
@@ -222,7 +325,10 @@ impl ToolRegistry {
     pub fn check_text(&self, mise: &str, lock: &str) -> Result<usize, String> {
         let effective = self.parse_mise(mise, Path::new("mise.toml"))?;
         self.check_rendered_equality(&effective, Path::new("mise.toml"))?;
-        self.check_lock(&effective, lock, Path::new("mise.lock"))?;
+        // `check_text` intentionally models only the registry-managed portion
+        // of a consumer pair. A filesystem-backed check uses rust-toolchain.toml
+        // and therefore validates the Rust lock entry as well.
+        self.check_lock(&effective, lock, Path::new("mise.lock"), true)?;
         Ok(effective.len())
     }
 
@@ -407,6 +513,7 @@ impl ToolRegistry {
         effective: &[EffectiveTool],
         body: &str,
         path: &Path,
+        allow_unmodeled_rust: bool,
     ) -> Result<(), String> {
         let document: Value = toml::from_str(body)
             .map_err(|error| format!("parsing lockfile {}: {error}", path.display()))?;
@@ -460,7 +567,9 @@ impl ToolRegistry {
         }
         let extras: Vec<_> = tools
             .keys()
-            .filter(|key| !used_keys.contains(*key))
+            .filter(|key| {
+                !used_keys.contains(*key) && !(allow_unmodeled_rust && key.as_str() == "rust")
+            })
             .cloned()
             .collect();
         if let Some(extra) = extras.first() {
