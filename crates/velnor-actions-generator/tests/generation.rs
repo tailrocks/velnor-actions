@@ -428,6 +428,19 @@ fn package_policy_and_workflows_are_closed_and_lane_selectable() {
 }
 
 #[test]
+fn signer_guards_attest_on_subject_inputs_and_admits_verified_commit_sha() {
+    let body = velnor_actions_generator::package::SIGNER_WORKFLOW;
+    // A called reusable workflow inherits the caller's github.event_name, so an
+    // event-name guard silently skips the attest job inside real callers.
+    assert!(!body.contains("github.event_name == 'workflow_call'"));
+    assert!(body.contains("if: ${{ inputs.artifact-name != '' && inputs.subject-path != '' }}"));
+    // source-ref is the caller-verified immutable release commit SHA (the
+    // caller proves tag and default branch resolve to it), not a tag ref.
+    assert!(body.contains("[[ \"$SOURCE_REF\" =~ ^[0-9a-f]{40}$ ]]"));
+    assert!(!body.contains("refs/tags/v*"));
+}
+
+#[test]
 fn package_generation_writes_exact_callables_and_templates() {
     let dir = common::bound_fixture(DUMMY_SHA);
     let updater =
