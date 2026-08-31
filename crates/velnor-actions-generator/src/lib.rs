@@ -252,7 +252,13 @@ pub fn render_consumer_to_dir(
     tools::check_mise_vocabulary(&mise_path)?;
     let existing = std::fs::read_to_string(&mise_path)
         .map_err(|e| format!("reading {}: {e}", mise_path.display()))?;
-    let normalized = registry.normalize_mise_file_with_tools(&existing, tools::FLEET_TASK_TOOLS)?;
+    let (migrated, legacy_nextest) = tools::ToolRegistry::migrate_legacy_nextest(&existing)?;
+    let mut required_tools = tools::FLEET_TASK_TOOLS.to_vec();
+    if legacy_nextest {
+        required_tools.push("nextest");
+    }
+    let normalized =
+        registry.normalize_mise_file_with_tools(&migrated, required_tools.iter().copied())?;
     let with_tasks =
         policy::render_mise_tasks(&normalized, &policy::fleet_tasks(metadata, repo.class));
     write_if_changed(&mise_path, &with_tasks)?;
@@ -262,7 +268,7 @@ pub fn render_consumer_to_dir(
     let source_lock = std::fs::read_to_string(root.join("mise.lock"))
         .map_err(|e| format!("reading generator mise.lock: {e}"))?;
     let projected_lock =
-        registry.project_lock_file(&existing_lock, &source_lock, tools::FLEET_TASK_TOOLS)?;
+        registry.project_lock_file(&existing_lock, &source_lock, required_tools.iter().copied())?;
     registry.check_text(&with_tasks, &projected_lock)?;
     write_if_changed(&lock_path, &projected_lock)?;
     let ignore_changed = previous_ignore.as_deref() != Some(policy::IGNORE_FILE);

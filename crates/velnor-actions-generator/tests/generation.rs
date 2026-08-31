@@ -681,8 +681,26 @@ fn render_consumer_to_dir_writes_envelope_artifacts_without_touching_repo_tasks(
     let out = common::temp_dir("consumer-out");
     let root = common::repo_root();
     std::fs::copy(root.join("README.md"), out.join("README.md")).unwrap();
-    std::fs::copy(root.join("mise.toml"), out.join("mise.toml")).unwrap();
-    std::fs::copy(root.join("mise.lock"), out.join("mise.lock")).unwrap();
+    let legacy_mise = std::fs::read_to_string(root.join("mise.toml"))
+        .unwrap()
+        .replace(
+            "\"aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\"",
+            "\"github:nextest-rs/nextest\" = \"cargo-nextest-0.9.140\"",
+        );
+    assert!(legacy_mise.contains("github:nextest-rs/nextest"));
+    std::fs::write(out.join("mise.toml"), legacy_mise).unwrap();
+    let legacy_lock = std::fs::read_to_string(root.join("mise.lock"))
+        .unwrap()
+        .replace(
+            "tools.\"aqua:nextest-rs/nextest/cargo-nextest\"",
+            "tools.\"github:nextest-rs/nextest\"",
+        )
+        .replace(
+            "backend = \"aqua:nextest-rs/nextest/cargo-nextest\"",
+            "backend = \"github:nextest-rs/nextest\"",
+        );
+    assert!(legacy_lock.contains("github:nextest-rs/nextest"));
+    std::fs::write(out.join("mise.lock"), legacy_lock).unwrap();
     std::fs::write(out.join("AGENTS.md"), "# Repository rules\n").unwrap();
     let path = velnor_actions_generator::render_consumer_to_dir(
         &root,
@@ -709,6 +727,21 @@ fn render_consumer_to_dir_writes_envelope_artifacts_without_touching_repo_tasks(
         std::fs::read_to_string(out.join("mise.toml"))
             .unwrap()
             .contains("fleet:check")
+    );
+    assert!(
+        std::fs::read_to_string(out.join("mise.toml"))
+            .unwrap()
+            .contains("aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\"")
+    );
+    assert!(
+        !std::fs::read_to_string(out.join("mise.toml"))
+            .unwrap()
+            .contains("github:nextest-rs/nextest")
+    );
+    assert!(
+        !std::fs::read_to_string(out.join("mise.lock"))
+            .unwrap()
+            .contains("github:nextest-rs/nextest")
     );
 }
 

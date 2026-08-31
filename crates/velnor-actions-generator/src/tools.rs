@@ -22,6 +22,11 @@ const REQUIRED_MISE_VERBS: [&str; 6] = ["fmt", "fmt-fix", "lint", "test", "check
 /// Tools required by the generator-owned fleet tasks.
 pub const FLEET_TASK_TOOLS: [&str; 3] = ["repolint", "alint", "zizmor"];
 
+const LEGACY_NEXTEST_KEY: &str = "github:nextest-rs/nextest";
+const LEGACY_NEXTEST_VERSION: &str = "cargo-nextest-0.9.140";
+const CANONICAL_NEXTEST_KEY: &str = "aqua:nextest-rs/nextest/cargo-nextest";
+const CANONICAL_NEXTEST_VERSION: &str = "0.9.140";
+
 /// One generator-owned tool policy entry.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -205,6 +210,66 @@ impl ToolRegistry {
         Ok(output)
     }
 
+    /// Normalize the exact nextest declaration emitted by older consumer
+    /// repositories before applying the strict registry check.
+    ///
+    /// This compatibility path is intentionally render-only: callers must
+    /// still pass the returned body through `normalize_mise_file_with_tools`.
+    /// No other legacy source or version is accepted.
+    pub(crate) fn migrate_legacy_nextest(body: &str) -> Result<(String, bool), String> {
+        let document: Value = toml::from_str(body)
+            .map_err(|error| format!("parsing mise file for legacy migration: {error}"))?;
+        let Some(tools) = document.get("tools").and_then(Value::as_table) else {
+            return Ok((body.to_owned(), false));
+        };
+        let Some(value) = tools.get(LEGACY_NEXTEST_KEY) else {
+            return Ok((body.to_owned(), false));
+        };
+        if tools.contains_key(CANONICAL_NEXTEST_KEY) {
+            return Err(format!(
+                "mise declares both legacy {LEGACY_NEXTEST_KEY:?} and canonical {CANONICAL_NEXTEST_KEY:?} nextest tools"
+            ));
+        }
+        if value.as_str() != Some(LEGACY_NEXTEST_VERSION) {
+            return Err(format!(
+                "legacy nextest migration accepts only {LEGACY_NEXTEST_KEY:?} = {LEGACY_NEXTEST_VERSION:?}, found {value:?}"
+            ));
+        }
+
+        let mut output = String::new();
+        let mut in_tools = false;
+        let mut replaced = false;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if header_name(trimmed) == Some("[tools]") {
+                in_tools = true;
+            } else if in_tools && top_level_header(trimmed) {
+                in_tools = false;
+            }
+            if in_tools && is_legacy_nextest_assignment(trimmed) {
+                let indentation = &line[..line.len() - line.trim_start().len()];
+                output.push_str(indentation);
+                writeln!(
+                    output,
+                    "{} = {}",
+                    toml_key(CANONICAL_NEXTEST_KEY),
+                    toml_string(CANONICAL_NEXTEST_VERSION)
+                )
+                .expect("writing a String cannot fail");
+                replaced = true;
+            } else {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+        if !replaced {
+            return Err(format!(
+                "legacy nextest declaration {LEGACY_NEXTEST_KEY:?} must be a simple [tools] assignment"
+            ));
+        }
+        Ok((output, true))
+    }
+
     /// Project selected tool lock entries from a canonical source lock into a
     /// consumer lock. Existing non-selected entries are retained, while any
     /// selected aliases are replaced by the registry's canonical lock key and
@@ -252,14 +317,18 @@ impl ToolRegistry {
             } else {
                 name
             };
-            let candidates = [
+            let mut candidates = vec![
                 name,
                 spec.source.as_str(),
                 spec.backend.as_deref().unwrap_or(""),
             ];
+            if name == "nextest" {
+                candidates.push(LEGACY_NEXTEST_KEY);
+            }
             let source_key = candidates
                 .iter()
                 .find(|candidate| source_tools.contains_key(**candidate))
+                .copied()
                 .ok_or_else(|| {
                     format!("generator mise.lock has no entry for tool {name:?} ({canonical_key})")
                 })?;
@@ -269,7 +338,7 @@ impl ToolRegistry {
                 }
             }
             let value = source_tools
-                .get(*source_key)
+                .get(source_key)
                 .expect("source lock key found above")
                 .clone();
             tools.insert(canonical_key.to_owned(), value);
@@ -678,6 +747,11 @@ fn toml_key(value: &str) -> String {
     }
 }
 
+fn is_legacy_nextest_assignment(line: &str) -> bool {
+    let declaration = line.split_once('#').map_or(line, |(prefix, _)| prefix);
+    declaration.trim() == "\"github:nextest-rs/nextest\" = \"cargo-nextest-0.9.140\""
+}
+
 fn top_level_header(line: &str) -> bool {
     let Some(header) = header_name(line) else {
         return false;
@@ -742,4 +816,45 @@ pub fn check_mise_vocabulary(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry() -> ToolRegistry {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        ToolRegistry::load(&root.join("fleet/fleet-tools.toml")).expect("load registry")
+    }
+
+    #[test]
+    fn render_migrates_only_the_exact_legacy_nextest_declaration() {
+        let legacy = "[tools]\n\"github:nextest-rs/nextest\" = \"cargo-nextest-0.9.140\"\n[tasks.fmt]\ndescription = \"fmt\"\n";
+        let (migrated, changed) = ToolRegistry::migrate_legacy_nextest(legacy).unwrap();
+
+        assert!(changed);
+        assert!(migrated.contains("\"aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\""));
+        assert!(!migrated.contains("github:nextest-rs/nextest"));
+        assert!(migrated.contains("[tasks.fmt]\ndescription = \"fmt\""));
+
+        let wrong = legacy.replace("cargo-nextest-0.9.140", "cargo-nextest-0.9.141");
+        let error = ToolRegistry::migrate_legacy_nextest(&wrong).unwrap_err();
+        assert!(error.contains("accepts only"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn render_migration_projects_legacy_nextest_lock_to_canonical_source() {
+        let registry = registry();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source_lock = fs::read_to_string(root.join("mise.lock")).unwrap();
+        let legacy_lock = "# @generated\n\nlockfile_version = 1\n\n[[tools.\"github:nextest-rs/nextest\"]]\nversion = \"cargo-nextest-0.9.140\"\nbackend = \"github:nextest-rs/nextest\"\n";
+        let mise = "[tools]\n\"aqua:nextest-rs/nextest/cargo-nextest\" = \"0.9.140\"\n";
+
+        let projected = registry
+            .project_lock_file(legacy_lock, &source_lock, ["nextest"])
+            .unwrap();
+        assert!(projected.contains("tools.\"aqua:nextest-rs/nextest/cargo-nextest\""));
+        assert!(!projected.contains("github:nextest-rs/nextest"));
+        assert_eq!(registry.check_text(mise, &projected).unwrap(), 1);
+    }
 }
