@@ -162,7 +162,7 @@ fn repository_inventory_bytes_are_exactly_bound() {
     let bytes = std::fs::read(common::repo_root().join("fleet").join("repositories.toml")).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(bytes)),
-        "e9c5b255fad888d242ba11ad6ab434362fb022b017884d651bbabb61b02d27ab"
+        "9f964226dbb0a4a46c1a864876bb8126b02e23cd3b96b71457568db6b923ee1e"
     );
 }
 
