@@ -196,7 +196,7 @@ pub fn consumer_template(class: RepositoryClass) -> String {
         b.line(4, "with:");
         b.line(
             6,
-            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor' }}",
+            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || github.event_name == 'push' && 'github' || 'velnor' }}",
         );
         for input in AUXILIARY_INPUTS {
             b.line(6, &format!("{input}: ${{{{ inputs.{input} || '' }}}}"));

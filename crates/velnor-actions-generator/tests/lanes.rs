@@ -38,16 +38,16 @@ fn resolve_lanes_expands_both_independently() {
 #[test]
 fn omitted_lane_defaults_to_velnor_for_every_owner() {
     let t = render::consumer_template(RepositoryClass::Code);
-    assert!(t.contains("github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor'"));
+    assert!(t.contains("github.event_name == 'workflow_dispatch' && inputs.lane || github.event_name == 'push' && 'github' || 'velnor'"));
     assert!(t.contains("type: choice"));
     assert!(t.contains("default: velnor"));
     assert_eq!(
         t.matches(
-            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || 'velnor' }}"
+            "lane: ${{ github.event_name == 'workflow_dispatch' && inputs.lane || github.event_name == 'push' && 'github' || 'velnor' }}"
         )
         .count(),
         3,
-        "every owner-local caller uses the same Velnor default",
+        "every owner-local caller uses the same Velnor default; push uses GitHub lane so merged-PR pushes do not occupy velnor-trusted",
     );
 }
 
