@@ -88,6 +88,18 @@ fn task031_out_of_scope_census_row_is_authoritative() {
 }
 
 #[test]
+fn velnor_ci_producer_census_row_is_authoritative() {
+    let manifest = load();
+    let row = manifest
+        .repositories()
+        .iter()
+        .find(|repository| repository.slug == "tailrocks/velnor")
+        .expect("Velnor repository remains registered");
+    assert_eq!(row.census.kind, RepositoryKind::CiProducer);
+    assert!(!row.census.research);
+}
+
+#[test]
 fn containment_rule_is_scoped_to_path_bearing_build_fields() {
     let config = velnor_actions_generator::policy::alint_config(RepositoryClass::Code);
     assert!(config.contains(
@@ -162,7 +174,7 @@ fn repository_inventory_bytes_are_exactly_bound() {
     let bytes = std::fs::read(common::repo_root().join("fleet").join("repositories.toml")).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(bytes)),
-        "e9c5b255fad888d242ba11ad6ab434362fb022b017884d651bbabb61b02d27ab"
+        "9f964226dbb0a4a46c1a864876bb8126b02e23cd3b96b71457568db6b923ee1e"
     );
 }
 
@@ -428,12 +440,12 @@ fn package_policy_and_workflows_are_closed_and_lane_selectable() {
 }
 
 #[test]
-fn signer_guards_attest_on_subject_inputs_and_admits_verified_commit_sha() {
+fn signer_guards_attest_on_callable_input_and_admits_verified_commit_sha() {
     let body = velnor_actions_generator::package::SIGNER_WORKFLOW;
-    // A called reusable workflow inherits the caller's github.event_name, so an
-    // event-name guard silently skips the attest job inside real callers.
+    // A called reusable workflow inherits the caller's github.event_name, so
+    // discriminate on the callable-only input instead.
     assert!(!body.contains("github.event_name == 'workflow_call'"));
-    assert!(body.contains("if: ${{ inputs.artifact-name != '' && inputs.subject-path != '' }}"));
+    assert!(body.contains("if: ${{ inputs.lanes == '' }}"));
     // source-ref is the caller-verified immutable release commit SHA (the
     // caller proves tag and default branch resolve to it), not a tag ref.
     assert!(body.contains("[[ \"$SOURCE_REF\" =~ ^[0-9a-f]{40}$ ]]"));
