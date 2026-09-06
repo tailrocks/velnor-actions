@@ -43,17 +43,15 @@ Canonical source of the Velnor Actions fleet.
 ## Generator CLI
 
 - `mise run generate` — invoke the Velnor workflow generator. The task uses the
-  sibling `../velnor` checkout by default; set `VELNOR_WORKFLOW_SOURCE_DIR` when
-  the Velnor checkout lives elsewhere.
+  sibling `../velnor` checkout by default. In CI or another standalone checkout,
+  it runs the pinned Velnor revision; set `VELNOR_WORKFLOW_SOURCE_DIR` to use a
+  different local checkout.
 - `tool-registry --root . --fleet fleet/repositories.toml` — validate the
   generator-owned tool registry, root mise graph, lockfile, and 28-repository
   manifest shape.
-- `render-consumer --root . --repository OWNER/REPO --jackin-release-sha <40-hex>
-  --tailrocks-release-sha <40-hex> --chainargos-release-sha <40-hex> --calver
-  <CalVer> --output DIR` — materialize one consumer's
-  `DIR/.github/workflows/ci.yml`, atomically replacing the three owner-local SHA
-  placeholders and their shared CalVer. Each SHA is the target of that owner's
-  immutable mirror tag; mirror histories need not share commit identities.
+- The legacy `render-consumer` APIs remain only for compatibility tests. They are
+  not workflow-generation entry points; all workflow files are produced by
+  `velnor-workflow`.
 - `audit --root .` — the full fleet audit (prints
   `fleet valid: 28 repositories, 5 classes, 5 templates`).
 
