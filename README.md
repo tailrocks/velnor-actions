@@ -37,15 +37,14 @@ Canonical source of the Velnor Actions fleet.
   (jackin-project / tailrocks / ChainArgos) selected by `github.repository_owner`, a
   owner-local `@<sha> # <CalVer>` release pins, and a fail-closed `ci-required`
   aggregator.
-- `crates/velnor-actions-generator/` — the Rust generator: `model` (data + validation),
-  `render` (deterministic rendering), `cache` (trusted cache declaration/key
-  validation), `audit` (regeneration, byte, closure, and fail-closed aggregation
-  checks), and the CLI.
+- `crates/velnor-actions-generator/` — the legacy fleet model and audit library.
+  It no longer exposes a workflow-writing CLI; Velnor owns every workflow output.
 
 ## Generator CLI
 
-- `generate --root .` — render the five templates (and, once `block-sha` is bound,
-  the five callable workflows).
+- `mise run generate` — invoke the Velnor workflow generator. The task uses the
+  sibling `../velnor` checkout by default; set `VELNOR_WORKFLOW_SOURCE_DIR` when
+  the Velnor checkout lives elsewhere.
 - `tool-registry --root . --fleet fleet/repositories.toml` — validate the
   generator-owned tool registry, root mise graph, lockfile, and 28-repository
   manifest shape.
@@ -65,7 +64,8 @@ with:
 
 ```bash
 mise install --locked
-mise run generate       # re-render from data (should be a no-op on a clean tree)
+mise run generate       # Velnor CLI; should be a no-op on a clean tree
+mise run generator-check # Velnor CLI ownership and byte check
 mise run ci
 mise run ci:contract    # registry + fleet contract gate
 bash tools/check-tool-registry.sh --fixtures tests/fixtures/tools/
